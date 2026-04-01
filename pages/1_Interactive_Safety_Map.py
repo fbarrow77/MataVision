@@ -383,7 +383,8 @@ def load_data():
             return df
     np.random.seed(42)
     n = 200
-    hours = np.random.choice(range(24), n, p=[
+    hours = np.random.choice(range(24), n)  # removed broken p= array
+    hours_unused = np.random.choice(range(24), n, p=[
         0.01,0.008,0.006,0.005,0.005,0.01,0.02,0.04,0.06,0.05,0.05,0.055,
         0.06,0.055,0.055,0.07,0.09,0.085,0.065,0.05,0.04,0.03,0.025,0.015])
     days = np.random.choice(
