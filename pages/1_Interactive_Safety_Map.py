@@ -383,19 +383,17 @@ def load_data():
             return df
     np.random.seed(42)
     n = 200
-    hours = np.random.choice(range(24), n)  # removed broken p= array
-    hours_unused = np.random.choice(range(24), n, p=[
-        0.01,0.008,0.006,0.005,0.005,0.01,0.02,0.04,0.06,0.05,0.05,0.055,
-        0.06,0.055,0.055,0.07,0.09,0.085,0.065,0.05,0.04,0.03,0.025,0.015])
+    hours = np.random.choice(range(24), n)
     days = np.random.choice(
-        ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'],
-        n, p=[0.145,0.15,0.155,0.145,0.17,0.125,0.11])
+        ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'], n)
     return pd.DataFrame({
-        'LATITUDE': np.random.uniform(42.505,42.540,n),
-        'LONGITUDE': np.random.uniform(-70.915,-70.870,n),
-        'Hour': hours, 'Severity_Score': np.random.choice([1,2,3],n,p=[0.73,0.267,0.003]),
-        'DayOfWeek': days, 'Month': np.random.choice(range(1,13),n),
-        'At_Intersection': np.random.choice([0,1],n,p=[0.55,0.45]),
+        'LATITUDE': np.random.uniform(42.505, 42.540, n),
+        'LONGITUDE': np.random.uniform(-70.915, -70.870, n),
+        'Hour': hours,
+        'Severity_Score': np.random.choice([1, 2, 3], n),
+        'DayOfWeek': days,
+        'Month': np.random.choice(range(1, 13), n),
+        'At_Intersection': np.random.choice([0, 1], n),
     })
 
 crash_df = load_data()

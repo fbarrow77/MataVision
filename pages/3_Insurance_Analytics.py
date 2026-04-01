@@ -423,8 +423,8 @@ def style_selected(val):
 
 styled_comp = comp_df[["Location","Zone","Current Risk Score","Risk Level",
                         "Crashes","Peak Hour","Premium Adjustment","Selected"]].style \
-    .applymap(style_risk_lbl, subset=["Risk Level"]) \
-    .applymap(style_selected, subset=["Selected"]) \
+    .map(style_risk_lbl, subset=["Risk Level"]) \
+    .map(style_selected, subset=["Selected"]) \
     .background_gradient(subset=["Current Risk Score"], cmap="RdYlGn_r", vmin=0, vmax=100) \
     .hide(axis="index")
 st.dataframe(styled_comp, use_container_width=True, height=380)
