@@ -1,0 +1,28 @@
+/* --- MataVision Custom Theme --- */
+body {
+    background-color: #f9f6ff;
+    font-family: "Segoe UI", sans-serif;
+}
+
+/* Headings and title */
+h1, h2, h3, h4 {
+    color: #3C0DAA;
+    font-weight: 700;
+}
+
+/* Buttons */
+button, [data-testid="stMarkdownContainer"] a {
+    background-color: #7B3FE4 !important;
+    color: white !important;
+    border-radius: 8px !important;
+}
+
+/* Cards */
+.block-container {
+    border-radius: 12px;
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    background-color: #efe9ff;
+}
