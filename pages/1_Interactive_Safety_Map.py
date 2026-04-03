@@ -159,31 +159,44 @@ def score_route(stops, hour, is_weekend, weather):
 # GOOGLE MAPS DIRECTIONS
 # ================================================================
 @st.cache_data(show_spinner=False)
-def get_google_route(origin_name, dest_name, api_key, alternative=False):
+def get_google_route(origin_name, dest_name, api_key, alternative=False,
+                     safer_waypoint=None, hour=8, is_weekend=False, weather="Clear / Dry"):
     """
     Call Google Maps Directions API.
-    Returns list of (lat, lon) polyline points for the route,
-    plus list of waypoint intersection names along the route.
+    If alternative=True and safer_waypoint is provided, forces a detour
+    through the lowest-risk intersection to create a genuinely different route.
     """
     try:
         gmaps = googlemaps.Client(key=api_key)
         origin = SALEM_LOCATIONS[origin_name]
         dest   = SALEM_LOCATIONS[dest_name]
 
-        result = gmaps.directions(
-            origin=f"{origin[0]},{origin[1]}",
-            destination=f"{dest[0]},{dest[1]}",
-            mode="driving",
-            alternatives=True,         # ask for multiple route options
-            region="us"
-        )
+        # For safer route — find lowest-risk waypoint NOT on primary route
+        # and force Google to route through it
+        if alternative and safer_waypoint:
+            wp_coords = SALEM_LOCATIONS[safer_waypoint]
+            result = gmaps.directions(
+                origin=f"{origin[0]},{origin[1]}",
+                destination=f"{dest[0]},{dest[1]}",
+                waypoints=[f"{wp_coords[0]},{wp_coords[1]}"],
+                mode="driving",
+                region="us"
+            )
+        else:
+            result = gmaps.directions(
+                origin=f"{origin[0]},{origin[1]}",
+                destination=f"{dest[0]},{dest[1]}",
+                mode="driving",
+                alternatives=True,
+                region="us"
+            )
 
         if not result:
             return None, None
 
-        # Pick the right route — first = fastest, second = alternative if available
-        route_idx = 1 if alternative and len(result) > 1 else 0
-        route = result[route_idx]
+        # For primary: use first (fastest) route
+        # For safer: use the waypoint-forced route
+        route = result[0]
 
         # Decode polyline points
         import polyline as pl
@@ -245,12 +258,17 @@ def get_fallback_route(start, end):
     return points, stops
 
 def find_safer_stops(primary_stops, hour, is_weekend, weather, start, end):
-    """Find an alternative set of stops avoiding the highest-risk intersection."""
+    """
+    Find an alternative set of stops avoiding the highest-risk intersection.
+    Returns (alt_stops, best_waypoint) — waypoint is used to force Google Maps detour.
+    """
     primary_scores = score_route(primary_stops, hour, is_weekend, weather)
     max_risk = max(primary_scores, key=lambda x: x["score"])
     if max_risk["score"] < RISK_THRESHOLD:
-        return None
-    # Find lowest-risk replacement near the route midpoint
+        return None, None
+
+    # Find lowest-risk intersection NOT on primary route
+    # Sort by risk score first (lowest risk = best detour), then by proximity
     s_lat, s_lon = SALEM_LOCATIONS[start]
     e_lat, e_lon = SALEM_LOCATIONS[end]
     alternatives = []
@@ -258,13 +276,23 @@ def find_safer_stops(primary_stops, hour, is_weekend, weather, start, end):
         if name in primary_stops or name in [start, end]:
             continue
         score = ml_risk_score(name, hour, is_weekend, weather)
-        dist  = (((lat-(s_lat+e_lat)/2)**2+((lon-(s_lon+e_lon)/2)**2))**.5)
-        alternatives.append((score, dist, name))
+        # Weight: 70% risk reduction, 30% proximity
+        dist = (((lat-(s_lat+e_lat)/2)**2+((lon-(s_lon+e_lon)/2)**2))**.5)
+        weighted = (score * 0.7) + (dist * 1000 * 0.3)
+        alternatives.append((weighted, score, dist, name))
     alternatives.sort()
+
     if not alternatives:
-        return None
-    return [alternatives[0][2] if s == max_risk["intersection"] else s
-            for s in primary_stops]
+        return None, None
+
+    best_waypoint = alternatives[0][3]
+    alt_stops = [best_waypoint if s == max_risk["intersection"] else s
+                 for s in primary_stops]
+    # Make sure waypoint is included if it wasnt in primary stops
+    if best_waypoint not in alt_stops:
+        alt_stops.insert(len(alt_stops)//2, best_waypoint)
+
+    return alt_stops, best_waypoint
 
 def build_route_map(route_points, stops, scores, map_label, height=500):
     """
@@ -289,9 +317,11 @@ def build_route_map(route_points, stops, scores, map_label, height=500):
     m.fit_bounds([sw, ne])
 
     # Draw the real road route polyline
+    # safer route uses green, primary uses purple
+    line_color = "#16a34a" if "Safer" in map_label else "#7c3aed"
     folium.PolyLine(
         route_points,
-        color="#7c3aed", weight=5, opacity=0.9
+        color=line_color, weight=5, opacity=0.9
     ).add_to(m)
 
     # Score markers for each matched intersection
@@ -592,41 +622,41 @@ if not is_planner:
             st.stop()
 
         # ── FETCH ROUTES ──────────────────────────────────
-        with st.spinner("🗺️ Fetching route from Google Maps...") if USE_GMAPS else st.empty():
-            if USE_GMAPS:
-                # Primary route — fastest
+
+        # Step 1: Get primary route
+        if USE_GMAPS:
+            with st.spinner("🗺️ Fetching primary route from Google Maps..."):
                 primary_points, primary_stops = get_google_route(
                     start_loc, end_loc, GMAPS_KEY, alternative=False)
-                # Alternative route — Google's second option
-                alt_points_raw, alt_stops_raw = get_google_route(
-                    start_loc, end_loc, GMAPS_KEY, alternative=True)
-
                 if not primary_points:
                     primary_points, primary_stops = get_fallback_route(start_loc, end_loc)
-                if not alt_points_raw:
-                    alt_points_raw, alt_stops_raw = get_fallback_route(start_loc, end_loc)
-            else:
-                primary_points, primary_stops = get_fallback_route(start_loc, end_loc)
-                alt_points_raw = None
-                alt_stops_raw  = None
+        else:
+            primary_points, primary_stops = get_fallback_route(start_loc, end_loc)
 
-        # Score all stops
         if not primary_stops:
             primary_stops = [start_loc, end_loc]
         primary_scores = score_route(primary_stops, route_hour, route_weekend, route_weather)
 
-        # Find the safer route — either Google's alternative or ML-rerouted
-        safer_stops = find_safer_stops(
+        # Step 2: ML finds the safest detour waypoint
+        safer_stops, best_waypoint = find_safer_stops(
             primary_stops, route_hour, route_weekend, route_weather, start_loc, end_loc)
 
         if safer_stops:
-            # If Google gave us a real alternative, use its polyline
-            if USE_GMAPS and alt_points_raw:
-                alt_points = alt_points_raw
-                alt_stops  = alt_stops_raw if alt_stops_raw else safer_stops
+            if USE_GMAPS and best_waypoint:
+                # Force Google Maps to route through the lowest-risk waypoint
+                with st.spinner(f"🛡️ Finding safer route via {best_waypoint.split('/')[0].strip()}..."):
+                    alt_points, alt_stops_gmaps = get_google_route(
+                        start_loc, end_loc, GMAPS_KEY,
+                        alternative=True, safer_waypoint=best_waypoint,
+                        hour=route_hour, is_weekend=route_weekend, weather=route_weather)
+                    if not alt_points:
+                        # Fallback: straight line through waypoint
+                        alt_points = [SALEM_LOCATIONS[s] for s in safer_stops]
+                    alt_stops = safer_stops
             else:
                 alt_points = [SALEM_LOCATIONS[s] for s in safer_stops]
                 alt_stops  = safer_stops
+
             alt_scores = score_route(alt_stops, route_hour, route_weekend, route_weather)
             has_alt    = True
         else:
