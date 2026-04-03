@@ -378,7 +378,6 @@ else:
     styled = display_df.style \
         .map(style_risk,   subset=["Risk Level"]) \
         .map(style_action, subset=["Action"]) \
-    
         .hide(axis="index")
     st.dataframe(styled, use_container_width=True, height=min(320, 60+len(risk_df)*45))
 

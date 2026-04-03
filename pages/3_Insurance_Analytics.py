@@ -425,8 +425,7 @@ styled_comp = comp_df[["Location","Zone","Current Risk Score","Risk Level",
                         "Crashes","Peak Hour","Premium Adjustment","Selected"]].style \
     .map(style_risk_lbl, subset=["Risk Level"]) \
     .map(style_selected, subset=["Selected"]) \
-    
-    .hide(axis="index")
+        .hide(axis="index")
 st.dataframe(styled_comp, use_container_width=True, height=380)
 
 # ================================================================
