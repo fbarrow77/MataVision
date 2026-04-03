@@ -85,9 +85,9 @@ SALEM_LOCATIONS = {
     "North St / Essex St":            (42.5228, -70.8952),
     "Bridge St / Federal St":         (42.5243, -70.9043),
     "Highland Ave / Jefferson Ave":   (42.5108, -70.9012),
-    "Lafayette St / Loring Ave":      (42.5180, -70.8825),
-    "Canal St / Grove St":            (42.5072, -70.8993),
-    "Marlborough Rd / Ocean Ave":     (42.5157, -70.8879),
+    "Lafayette St / Loring Ave":      (42.5172, -70.9005),
+    "Canal St / Grove St":            (42.5072, -70.9020),
+    "Marlborough Rd / Ocean Ave":     (42.5155, -70.9012),
     "Derby St / Pickering Wharf":     (42.5168, -70.8901),
     "Boston St / Loring Ave":         (42.5092, -70.8845),
     "Aborn St / Essex St":            (42.5210, -70.9005),
@@ -449,12 +449,12 @@ if not is_planner:
             m = folium.Map(location=SALEM_CENTER, zoom_start=SALEM_ZOOM, tiles="CartoDB positron")
             hotspots = [
                 (42.5195,-70.8967,89,'High','Derby St / Washington Sq'),
-                (42.5228,-70.8952,76,'High','North St / Essex St'),
-                (42.5157,-70.8879,71,'High','Marlborough Rd / Ocean Ave'),
+                (42.5228,-70.8967,76,'High','North St / Essex St'),
+                (42.5155,-70.9012,71,'High','Marlborough Rd / Ocean Ave'),
                 (42.5243,-70.9043,68,'Medium','Bridge St / Federal St'),
                 (42.5108,-70.9012,62,'Medium','Highland Ave / Jefferson Ave'),
-                (42.5180,-70.8825,32,'Low','Lafayette St / Loring Ave'),
-                (42.5072,-70.8993,28,'Low','Canal St / Grove St'),
+                (42.5172,-70.9005,32,'Low','Lafayette St / Loring Ave'),
+                (42.5072,-70.9020,28,'Low','Canal St / Grove St'),
             ]
             dot_colors = {'High':'#dc2626','Medium':'#f59e0b','Low':'#22c55e'}
             for lat,lon,score,level,name in hotspots:
@@ -888,5 +888,5 @@ else:
                        else 'background-color:#dcfce7;color:#166534;font-weight:bold')
     def cr(v): return ('color:#dc2626;font-weight:bold' if 'High' in v
                        else 'color:#d97706;font-weight:bold' if 'Medium' in v else 'color:#16a34a;font-weight:bold')
-    st.dataframe(risk_data.style.applymap(ca,subset=['Action']).applymap(cr,subset=['Risk Score']).hide(axis='index'),
+    st.dataframe(risk_data.style.map(ca,subset=['Action']).map(cr,subset=['Risk Score']).hide(axis='index'),
                  use_container_width=True,height=300)
