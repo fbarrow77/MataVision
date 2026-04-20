@@ -214,9 +214,8 @@ def get_fallback_route(start, end):
 def find_safer_stops(primary_stops, hour, is_weekend, weather, start, end):
     primary_scores = score_route(primary_stops, hour, is_weekend, weather)
     max_risk = max(primary_scores, key=lambda x: x["score"])
-    # Only suggest alternate if a stop genuinely on the route scores 50%+
-    # (higher threshold since these are actual intersections you drive through)
-    if max_risk["score"] < 50:
+    # Only suggest alternate if a stop genuinely on the route is HIGH risk (70%+)
+    if max_risk["score"] < 70:
         return None, None
     s_lat, s_lon = SALEM_LOCATIONS[start]
     e_lat, e_lon = SALEM_LOCATIONS[end]
