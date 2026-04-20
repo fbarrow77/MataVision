@@ -309,10 +309,7 @@ st.markdown("""
   and suggests a safer alternative if risk exceeds 30%</p>
 </div>""", unsafe_allow_html=True)
 
-if USE_GMAPS:
-    st.success("🗺️ Google Maps connected — using real Salem road routing", icon="✅")
-else:
-    st.info("📍 Running without Google Maps — routes use estimated paths. Add API key in sidebar.", icon="ℹ️")
+
 
 # ================================================================
 # SIDEBAR
