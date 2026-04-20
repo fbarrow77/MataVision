@@ -182,10 +182,10 @@ def get_google_route(origin_name, dest_name, api_key, safer_waypoint=None):
         for loc_name, (lat, lon) in SALEM_LOCATIONS.items():
             if loc_name in [origin_name, dest_name]:
                 continue
-            # Only 0.0005 degrees (~50m) — must be truly on the road path
+            # 0.001 degrees (~100m) — on the actual road path
             dists = [abs(lat - rlat) + abs(lon - rlon)
                      for rlat, rlon in zip(route_lats, route_lons)]
-            if min(dists) < 0.0005:
+            if min(dists) < 0.001:
                 matched_stops.append(loc_name)
         matched_stops.append(dest_name)
         seen = set()
@@ -232,8 +232,17 @@ def find_safer_stops(primary_stops, hour, is_weekend, weather, start, end):
     if not alternatives:
         return None, None
     best_waypoint = alternatives[0][2]
-    alt_stops = [best_waypoint if s == max_risk["intersection"] else s
-                 for s in primary_stops]
+
+    # Only replace middle stops — NEVER change start or end
+    alt_stops = []
+    for i, s in enumerate(primary_stops):
+        if i == 0 or i == len(primary_stops) - 1:
+            alt_stops.append(s)  # always keep start and end
+        elif s == max_risk["intersection"]:
+            alt_stops.append(best_waypoint)  # replace risky middle stop
+        else:
+            alt_stops.append(s)
+
     return alt_stops, best_waypoint
 
 def build_route_map(route_points, stops, scores, map_label, height=480):
