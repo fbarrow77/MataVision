@@ -212,11 +212,27 @@ def get_fallback_route(start, end):
     return [SALEM_LOCATIONS[s] for s in stops], stops
 
 def find_safer_stops(primary_stops, hour, is_weekend, weather, start, end):
+    """
+    Only suggest an alternate route if a MIDDLE stop (not start or end)
+    scores 70%+ (genuinely High Risk). Start and end are never avoidable.
+    """
     primary_scores = score_route(primary_stops, hour, is_weekend, weather)
-    max_risk = max(primary_scores, key=lambda x: x["score"])
-    # Only suggest alternate if a stop genuinely on the route is HIGH risk (70%+)
-    if max_risk["score"] < 70:
+
+    # Find the highest-risk MIDDLE stop only (ignore start and end)
+    middle_scores = [s for s in primary_scores
+                     if s["intersection"] != start and s["intersection"] != end]
+
+    if not middle_scores:
+        # Only start and end — no middle stops to reroute around
         return None, None
+
+    max_middle_risk = max(middle_scores, key=lambda x: x["score"])
+
+    # Only reroute if a middle stop is genuinely HIGH risk (70%+)
+    if max_middle_risk["score"] < 70:
+        return None, None
+
+    # Find the lowest-risk replacement for that middle stop
     s_lat, s_lon = SALEM_LOCATIONS[start]
     e_lat, e_lon = SALEM_LOCATIONS[end]
     alternatives = []
@@ -224,21 +240,26 @@ def find_safer_stops(primary_stops, hour, is_weekend, weather, start, end):
         if name in primary_stops or name in [start, end]:
             continue
         score = ml_risk_score(name, hour, is_weekend, weather)
-        dist  = (((lat-(s_lat+e_lat)/2)**2+((lon-(s_lon+e_lon)/2)**2))**.5)
+        # Must be lower risk than the dangerous stop to be worth suggesting
+        if score >= max_middle_risk["score"]:
+            continue
+        dist = (((lat-(s_lat+e_lat)/2)**2+((lon-(s_lon+e_lon)/2)**2))**.5)
         weighted = (score * 0.7) + (dist * 1000 * 0.3)
         alternatives.append((weighted, score, name))
+
     alternatives.sort()
     if not alternatives:
         return None, None
+
     best_waypoint = alternatives[0][2]
 
-    # Only replace middle stops — NEVER change start or end
+    # Replace only the dangerous middle stop — keep start and end always
     alt_stops = []
     for i, s in enumerate(primary_stops):
         if i == 0 or i == len(primary_stops) - 1:
-            alt_stops.append(s)  # always keep start and end
-        elif s == max_risk["intersection"]:
-            alt_stops.append(best_waypoint)  # replace risky middle stop
+            alt_stops.append(s)
+        elif s == max_middle_risk["intersection"]:
+            alt_stops.append(best_waypoint)
         else:
             alt_stops.append(s)
 
@@ -488,12 +509,31 @@ with card2:
           </div>
         </div>""", unsafe_allow_html=True)
     else:
-        st.markdown(f"""
-        <div style="background:#f0fdf4;border:2px solid #16a34a;border-radius:14px;padding:18px 22px">
-          <div style="font-weight:700;font-size:.95rem;margin-bottom:8px">✅ Route Already Safe</div>
-          <p style="font-size:.85rem;color:#166534;margin:0">
-            All intersections score below {RISK_THRESHOLD}% — good to go!</p>
-        </div>""", unsafe_allow_html=True)
+        # Check if start or end themselves are high risk and warn user
+        start_score = primary_scores[0]["score"] if primary_scores else 0
+        end_score   = primary_scores[-1]["score"] if primary_scores else 0
+        start_high  = start_score >= 70
+        end_high    = end_score >= 70
+
+        if start_high or end_high:
+            warn_msg = []
+            if start_high:
+                warn_msg.append(f"⚠️ Your starting point <b>{start_loc.split('/')[0].strip()}</b> is a high-risk area ({start_score}%). Drive carefully when leaving.")
+            if end_high:
+                warn_msg.append(f"⚠️ Your destination <b>{end_loc.split('/')[0].strip()}</b> is a high-risk area ({end_score}%). Approach with caution.")
+            st.markdown(f"""
+            <div style="background:#fef3c7;border:2px solid #d97706;border-radius:14px;padding:18px 22px">
+              <div style="font-weight:700;font-size:.95rem;margin-bottom:8px">⚠️ Caution at Start/Destination</div>
+              <p style="font-size:.85rem;color:#92400e;margin:0">{"<br>".join(warn_msg)}</p>
+              <p style="font-size:.8rem;color:#92400e;margin-top:8px">No safer route needed — the route itself is clear, but be alert at these locations.</p>
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style="background:#f0fdf4;border:2px solid #16a34a;border-radius:14px;padding:18px 22px">
+              <div style="font-weight:700;font-size:.95rem;margin-bottom:8px">✅ Route Looks Safe</div>
+              <p style="font-size:.85rem;color:#166534;margin:0">
+                No high-risk intersections on this route under current conditions. Good to go!</p>
+            </div>""", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
