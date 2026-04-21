@@ -176,18 +176,64 @@ def get_google_route(origin_name, dest_name, api_key, safer_waypoint=None):
             for step in leg["steps"]:
                 points += pl.decode(step["polyline"]["points"])
 
-        matched_stops = [origin_name]
+        # ── HYBRID INTERSECTION MATCHING ──────────────────────────
+        # Step 1: Extract street names from Google directions steps
+        import re
+        route_streets = set()
+        for leg in route["legs"]:
+            for step in leg["steps"]:
+                instruction = re.sub('<[^<]+?>', '', step.get("html_instructions", ""))
+                # Extract road names — words after "onto", "on", "via", "toward"
+                for kw in ["onto ", "on ", "via ", "along "]:
+                    if kw in instruction.lower():
+                        idx = instruction.lower().find(kw) + len(kw)
+                        road = instruction[idx:].split(" ")[0].strip().rstrip(".,")
+                        if road:
+                            route_streets.add(road.lower())
+                # Also add full instruction words
+                for word in instruction.replace("/", " ").split():
+                    if len(word) > 3:
+                        route_streets.add(word.lower().rstrip(".,"))
+
         route_lats = [p[0] for p in points]
         route_lons = [p[1] for p in points]
+
+        matched_stops = [origin_name]
+        candidate_scores = []
+
         for loc_name, (lat, lon) in SALEM_LOCATIONS.items():
             if loc_name in [origin_name, dest_name]:
                 continue
-            # 0.001 degrees (~100m) — on the actual road path
+
+            # Method 1: Street name matching
+            # Split intersection name into its two road components
+            parts = [p.strip().lower() for p in loc_name.replace(" /", "/").split("/")]
+            name_match = False
+            if len(parts) == 2:
+                # Check if both street name keywords appear in route streets
+                part1_words = [w for w in parts[0].split() if len(w) > 2]
+                part2_words = [w for w in parts[1].split() if len(w) > 2]
+                match1 = any(any(pw in rs for rs in route_streets) for pw in part1_words)
+                match2 = any(any(pw in rs for rs in route_streets) for pw in part2_words)
+                if match1 and match2:
+                    name_match = True
+
+            # Method 2: Very tight distance fallback (~35m)
             dists = [abs(lat - rlat) + abs(lon - rlon)
                      for rlat, rlon in zip(route_lats, route_lons)]
-            if min(dists) < 0.001:
-                matched_stops.append(loc_name)
+            dist_match = min(dists) < 0.0004
+
+            if name_match or dist_match:
+                candidate_scores.append((min(dists), loc_name))
+
+        # Sort by proximity and keep max 3 intermediate stops
+        candidate_scores.sort()
+        for _, loc_name in candidate_scores[:3]:
+            matched_stops.append(loc_name)
+
         matched_stops.append(dest_name)
+
+        # Deduplicate keeping order
         seen = set()
         unique_stops = []
         for s in matched_stops:
@@ -549,8 +595,8 @@ with map1_col:
 
 with map2_col:
     if has_alt:
-        risky = max(primary_scores, key=lambda x: x["score"])["intersection"].split("/")[0].strip()
-        st.markdown(f"**✅ Safer Route** — avoids `{risky}` area")
+        wp_name = best_waypoint.split("/")[0].strip() if best_waypoint else "safer path"
+        st.markdown(f"**✅ Safer Route** — routed via `{wp_name}` (lower risk)")
         map2 = build_route_map(alt_points, alt_stops, alt_scores, "Safer Route")
     else:
         st.markdown("**✅ Primary Route** — already the safest option")
