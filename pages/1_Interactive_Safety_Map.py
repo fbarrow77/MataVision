@@ -167,9 +167,10 @@ def format_duration(seconds):
     return f"{mins//60}h {mins%60}min"
 
 def format_distance(meters):
-    if meters < 1000:
-        return f"{meters:.0f} m"
-    return f"{meters/1000:.1f} km"
+    miles = meters / 1609.34
+    if miles < 0.1:
+        return f"{int(meters)} m"
+    return f"{miles:.1f} mi"
 
 # ================================================================
 # GOOGLE MAPS — fetch multiple routes
@@ -498,27 +499,29 @@ riskiest_stop_name = safest_route["riskiest"]["intersection"]
 best_time, best_score = find_safest_hour(riskiest_stop_name, route_weekend, route_weather)
 best_lbl, best_col    = risk_label(best_score)
 
-# ================================================================
-# RECOMMENDATION BANNER
-# ================================================================
-st.markdown("### 🛡️ Route Safety Recommendation")
 
+
+# ================================================================
+# RECOMMENDATION
+# ================================================================
 fastest_sev = fastest_route["sev_label"].split()[0]
 safest_sev  = safest_route["sev_label"].split()[0]
 time_diff   = safest_route["duration"] - fastest_route["duration"]
 time_str    = format_duration(abs(time_diff)) if time_diff != 0 else "same time"
 
 if safest_route["label"] == fastest_route["label"]:
-    st.success(f"""✅ **The fastest route is also the safest!**
-    Route severity: **{safest_route['sev_label']}** — no trade-off needed.""")
+    st.success(
+        f"✅ **The fastest route is also the safest** — "
+        f"Severity: **{safest_route['sev_label']}**. No trade-off needed.")
 elif time_diff > 0:
-    sev_change = f"{fastest_sev} → {safest_sev}"
-    st.info(f"""🛡️ **Safer route recommended.**
-    The **{safest_route['label']}** takes **{time_str} longer** but reduces severity from
-    **{fastest_sev}** to **{safest_sev}** — a meaningful safety improvement for Salem roads.""")
+    st.info(
+        f"🛡️ **Safer route recommended.** The **{safest_route['label']}** takes "
+        f"**{time_str} longer** but reduces severity from **{fastest_sev}** to "
+        f"**{safest_sev}** — a meaningful safety improvement for Salem roads.")
 else:
-    st.success(f"""✅ **The safer route is also faster!**
-    Take the **{safest_route['label']}** — lower severity ({safest_sev}) and saves {time_str}.""")
+    st.success(
+        f"✅ **The safer route is also faster!** Take the **{safest_route['label']}** "
+        f"— lower severity ({safest_sev}) and saves {time_str}.")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -636,37 +639,7 @@ for route, col in zip(all_routes, map_cols):
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# ================================================================
-# SAFEST TIME TO TRAVEL
-# ================================================================
-st.markdown("### ⏰ Best Time to Travel This Route")
-st.markdown(f'<div style="font-size:.82rem;color:#6b7280;margin-bottom:14px">'
-            f'Based on the ML model — Hour of Day is the #1 predictor of crash risk (38% feature importance)</div>',
-            unsafe_allow_html=True)
 
-# Show risk by hour for the safest route's riskiest stop
-hours  = list(range(24))
-h_scores = [ml_risk_score(riskiest_stop_name, h, route_weekend, route_weather) for h in hours]
-h_labels = [f"{h%12 if h%12!=0 else 12}{'AM' if h<12 else 'PM'}" for h in hours]
-h_colors = ["#dc2626" if s>=70 else "#f59e0b" if s>=40 else "#22c55e" for s in h_scores]
-
-import plotly.graph_objects as go
-fig = go.Figure(go.Bar(x=h_labels, y=h_scores, marker_color=h_colors,
-                        text=[str(s) for s in h_scores], textposition="outside",
-                        textfont=dict(size=9)))
-fig.add_vline(x=disp_h-1, line_dash="dash", line_color="#7c3aed",
-              annotation_text=f"Now ({disp_h}:00 {am_pm})",
-              annotation_position="top right")
-fig.add_hline(y=70, line_dash="dot", line_color="#dc2626",
-              annotation_text="High Risk threshold")
-fig.update_layout(height=280, margin=dict(l=0,r=0,t=20,b=0),
-    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-    xaxis=dict(showgrid=False), yaxis=dict(range=[0,115], gridcolor="#f3f4f6"),
-    showlegend=False)
-st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-st.caption(f"Risk at {riskiest_stop_name} by hour — safest time: **{best_time}** ({best_score}% risk)")
-
-st.markdown("<br>", unsafe_allow_html=True)
 
 # ================================================================
 # STOP BREAKDOWN FOR RECOMMENDED ROUTE
