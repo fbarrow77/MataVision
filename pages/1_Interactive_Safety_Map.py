@@ -259,28 +259,7 @@ def get_all_routes(origin_name, dest_name, api_key):
                                "stops": stops2, "duration": dur2, "distance": dist2,
                                "color": "#2563eb", "icon": "🔀"})
 
-        # Route 3 — force through lowest-risk Salem intersection (balanced)
-        # Pick lowest-risk waypoint not at start or end
-        wp_candidates = [(BASE_RISK.get(n, 40), n) for n in SALEM_LOCATIONS
-                         if n not in [origin_name, dest_name]]
-        wp_candidates.sort()
-        if wp_candidates:
-            wp_name   = wp_candidates[0][1]
-            wp_coords = SALEM_LOCATIONS[wp_name]
-            result3   = gmaps.directions(
-                origin=f"{origin[0]},{origin[1]}",
-                destination=f"{dest[0]},{dest[1]}",
-                waypoints=[f"{wp_coords[0]},{wp_coords[1]}"],
-                mode="driving", region="us"
-            )
-            if result3:
-                pts3, sts3, dur3, dist3 = decode_route(result3[0])
-                stops3 = match_stops(pts3, sts3, origin_name, dest_name)
-                # Only add if genuinely different from existing routes
-                if not any(abs(dur3 - r["duration"]) < 30 for r in routes):
-                    routes.append({"label": "Balanced Route", "points": pts3,
-                                   "stops": stops3, "duration": dur3, "distance": dist3,
-                                   "color": "#16a34a", "icon": "⚖️"})
+
 
         return routes if routes else None
 
@@ -303,14 +282,9 @@ def get_fallback_routes(start, end):
     stops1  = [start] + ([candidates[0][1]] if candidates else []) + [end]
     points1 = [SALEM_LOCATIONS[s] for s in stops1]
 
-    stops2  = [start] + ([candidates[-1][1]] if len(candidates) > 1 else []) + [end]
-    points2 = [SALEM_LOCATIONS[s] for s in stops2]
-
     return [
-        {"label": "Fastest Route",  "points": points1, "stops": stops1,
+        {"label": "Fastest Route", "points": points1, "stops": stops1,
          "duration": 420, "distance": 1800, "color": "#7c3aed", "icon": "⚡"},
-        {"label": "Balanced Route", "points": points2, "stops": stops2,
-         "duration": 600, "distance": 2400, "color": "#16a34a", "icon": "⚖️"},
     ]
 
 def score_route_stops(stops, hour, is_weekend, weather):
