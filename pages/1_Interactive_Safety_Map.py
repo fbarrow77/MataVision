@@ -21,7 +21,7 @@ st.set_page_config(
     page_title="MataVision — Safe Route Planner",
     page_icon="🧭",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 css_path = os.path.join(os.path.dirname(__file__), '..', 'styles.css')
@@ -52,7 +52,29 @@ with col_right:
 st.divider()
 
 # ================================================================
-# SALEM LOCATIONS & ML MODEL
+# MONTH CONFIG
+# Directly maps to Month feature used in RF model training.
+# Modifiers reflect Salem-specific crash patterns from data.
+# ================================================================
+MONTH_CONFIG = {
+    "January":   {"month": 1,  "modifier": +10, "season": "☃️ Winter"},
+    "February":  {"month": 2,  "modifier": +8,  "season": "☃️ Winter"},
+    "March":     {"month": 3,  "modifier": +2,  "season": "🌸 Spring"},
+    "April":     {"month": 4,  "modifier": 0,   "season": "🌸 Spring"},
+    "May":       {"month": 5,  "modifier": -2,  "season": "🌸 Spring"},
+    "June":      {"month": 6,  "modifier": -4,  "season": "☀️ Summer"},
+    "July":      {"month": 7,  "modifier": -5,  "season": "☀️ Summer"},
+    "August":    {"month": 8,  "modifier": -3,  "season": "☀️ Summer"},
+    "September": {"month": 9,  "modifier": +2,  "season": "🍂 Fall"},
+    "October":   {"month": 10, "modifier": +12, "season": "🍂 Fall"},
+    "November":  {"month": 11, "modifier": +5,  "season": "🍂 Fall"},
+    "December":  {"month": 12, "modifier": +8,  "season": "☃️ Winter"},
+}
+
+MONTH_NAMES = list(MONTH_CONFIG.keys())
+
+# ================================================================
+# SALEM LOCATIONS & BASE RISK
 # ================================================================
 SALEM_LOCATIONS = {
     "Derby St / Washington Sq":       (42.5195, -70.8967),
@@ -113,46 +135,64 @@ USE_GMAPS = GMAPS_AVAILABLE and bool(GMAPS_KEY)
 
 # ================================================================
 # ML FUNCTIONS
+# RF feature importance order (Capstone_3.ipynb):
+#   Hour (~40%) > Month (~30%) > Is_Weekend (~12%) >
+#   Is_Rush_Hour (~10%) > At_Intersection (~8%)
 # ================================================================
-def ml_risk_score(location, hour, is_weekend, weather):
+def ml_risk_score(location, hour, is_weekend, month):
     base = BASE_RISK.get(location, 40)
+
+    # Hour modifier — strongest RF predictor (~40%)
     if 16 <= hour <= 18:            hour_mod = +18
     elif 7 <= hour <= 9:            hour_mod = +12
     elif hour >= 22 or hour <= 5:   hour_mod = +8
     elif 10 <= hour <= 14:          hour_mod = -5
     else:                           hour_mod = 0
-    weekend_mod  = -8 if is_weekend else +4
-    weather_mods = {"Clear / Dry": -5, "Rain / Wet Roads": +15,
-                    "Snow / Ice": +22, "Fog / Low Visibility": +18}
-    return max(0, min(100, base + hour_mod + weekend_mod + weather_mods.get(weather, 0)))
+
+    # Month modifier — 2nd strongest RF predictor (~30%)
+    month_mods = {
+        1: +10, 2: +8,  3: +2,  4: 0,
+        5: -2,  6: -4,  7: -5,  8: -3,
+        9: +2,  10: +12, 11: +5, 12: +8,
+    }
+    month_mod = month_mods.get(month, 0)
+
+    # Weekend modifier — RF: smaller impact (~12%)
+    weekend_mod = -8 if is_weekend else +4
+
+    return max(0, min(100, base + hour_mod + month_mod + weekend_mod))
 
 def risk_label(score):
     if score >= 70:  return "High Risk",     "#dc2626"
     if score >= 40:  return "Moderate Risk", "#f59e0b"
     return "Low Risk", "#16a34a"
 
-def route_severity(scored_stops):
-    """
-    Route Severity = 0.5 × Mean Stop Risk
-                   + 0.3 × Max Stop Risk
-                   + 0.2 × (Percent High-Risk Stops × 100)
-    """
+# ================================================================
+# ROUTE SEVERITY FORMULA
+# Based on MataVision RF model feature importance rankings.
+#
+#   Severity = 0.40 × Mean Stop Risk
+#            + 0.40 × Max Stop Risk
+#            + 0.20 × (% High-Risk Stops × 100)
+#            + Month Modifier (route-level, from Month RF feature)
+# ================================================================
+def route_severity(scored_stops, month_modifier):
     if not scored_stops:
         return 0
-    scores      = [s["score"] for s in scored_stops]
-    mean_risk   = np.mean(scores)
-    max_risk    = max(scores)
-    pct_high    = sum(1 for s in scores if s >= 70) / len(scores) * 100
-    severity    = 0.5 * mean_risk + 0.3 * max_risk + 0.2 * pct_high
-    return round(severity, 1)
+    scores    = [s["score"] for s in scored_stops]
+    mean_risk = np.mean(scores)
+    max_risk  = max(scores)
+    pct_high  = sum(1 for s in scores if s >= 70) / len(scores) * 100
+    base_sev  = 0.40 * mean_risk + 0.40 * max_risk + 0.20 * pct_high
+    return round(min(100, base_sev + month_modifier), 1)
 
 def severity_label(sev):
-    if sev >= 60:  return "High Severity",      "#dc2626"
-    if sev >= 35:  return "Moderate Severity",  "#f59e0b"
+    if sev >= 60:  return "High Severity",     "#dc2626"
+    if sev >= 35:  return "Moderate Severity", "#f59e0b"
     return "Low Severity", "#16a34a"
 
-def find_safest_hour(location, is_weekend, weather):
-    scores = [(h, ml_risk_score(location, h, is_weekend, weather)) for h in range(24)]
+def find_safest_hour(location, is_weekend, month):
+    scores = [(h, ml_risk_score(location, h, is_weekend, month)) for h in range(24)]
     scores.sort(key=lambda x: x[1])
     best_h, best_s = scores[0]
     am_pm = "AM" if best_h < 12 else "PM"
@@ -177,13 +217,6 @@ def format_distance(meters):
 # ================================================================
 @st.cache_data(show_spinner=False)
 def get_all_routes(origin_name, dest_name, api_key):
-    """
-    Fetch up to 3 route options from Google Maps:
-    1. Fastest route
-    2. Alternative route (if available)
-    3. Waypoint-forced route through lowest-risk Salem intersection
-    Returns list of route dicts with points, stops, duration, distance.
-    """
     try:
         gmaps  = googlemaps.Client(key=api_key)
         origin = SALEM_LOCATIONS[origin_name]
@@ -192,13 +225,13 @@ def get_all_routes(origin_name, dest_name, api_key):
         import polyline as pl
 
         def decode_route(route):
-            points = []
+            points  = []
             streets = set()
             for leg in route["legs"]:
                 for step in leg["steps"]:
                     points += pl.decode(step["polyline"]["points"])
-                    instruction = re.sub('<[^<]+?>', '', step.get("html_instructions",""))
-                    for word in instruction.replace("/"," ").split():
+                    instruction = re.sub('<[^<]+?>', '', step.get("html_instructions", ""))
+                    for word in instruction.replace("/", " ").split():
                         if len(word) > 3:
                             streets.add(word.lower().rstrip(".,"))
             duration = sum(leg["duration"]["value"] for leg in route["legs"])
@@ -213,7 +246,7 @@ def get_all_routes(origin_name, dest_name, api_key):
             for loc_name, (lat, lon) in SALEM_LOCATIONS.items():
                 if loc_name in [origin_name, dest_name]:
                     continue
-                parts = [p.strip().lower() for p in loc_name.replace(" /","/").split("/")]
+                parts = [p.strip().lower() for p in loc_name.replace(" /", "/").split("/")]
                 name_match = False
                 if len(parts) == 2:
                     p1 = [w for w in parts[0].split() if len(w) > 2]
@@ -222,7 +255,7 @@ def get_all_routes(origin_name, dest_name, api_key):
                     m2 = any(any(pw in rs for rs in streets) for pw in p2)
                     if m1 and m2:
                         name_match = True
-                dists = [abs(lat-rlat)+abs(lon-rlon)
+                dists = [abs(lat - rlat) + abs(lon - rlon)
                          for rlat, rlon in zip(route_lats, route_lons)]
                 if name_match or min(dists) < 0.0004:
                     candidates.append((min(dists), loc_name))
@@ -238,8 +271,6 @@ def get_all_routes(origin_name, dest_name, api_key):
             return unique
 
         routes = []
-
-        # Route 1 & 2 — fastest + alternative
         result = gmaps.directions(
             origin=f"{origin[0]},{origin[1]}",
             destination=f"{dest[0]},{dest[1]}",
@@ -251,47 +282,39 @@ def get_all_routes(origin_name, dest_name, api_key):
             routes.append({"label": "Fastest Route", "points": pts,
                            "stops": stops, "duration": dur, "distance": dist,
                            "color": "#7c3aed", "icon": "⚡"})
-
             if len(result) > 1:
                 pts2, sts2, dur2, dist2 = decode_route(result[1])
                 stops2 = match_stops(pts2, sts2, origin_name, dest_name)
                 routes.append({"label": "Alternative Route", "points": pts2,
                                "stops": stops2, "duration": dur2, "distance": dist2,
                                "color": "#2563eb", "icon": "🔀"})
-
-
-
         return routes if routes else None
 
     except Exception:
         return None
 
 def get_fallback_routes(start, end):
-    """Fallback when no API key — simulate 2 routes."""
     s_lat, s_lon = SALEM_LOCATIONS[start]
     e_lat, e_lon = SALEM_LOCATIONS[end]
     mid_lat = (s_lat + e_lat) / 2
     mid_lon = (s_lon + e_lon) / 2
-
     candidates = sorted(
-        [(((lat-mid_lat)**2+(lon-mid_lon)**2)**.5, name)
+        [(((lat - mid_lat) ** 2 + (lon - mid_lon) ** 2) ** .5, name)
          for name, (lat, lon) in SALEM_LOCATIONS.items()
          if name not in [start, end]]
     )
-
     stops1  = [start] + ([candidates[0][1]] if candidates else []) + [end]
     points1 = [SALEM_LOCATIONS[s] for s in stops1]
-
     return [
         {"label": "Fastest Route", "points": points1, "stops": stops1,
          "duration": 420, "distance": 1800, "color": "#7c3aed", "icon": "⚡"},
     ]
 
-def score_route_stops(stops, hour, is_weekend, weather):
+def score_route_stops(stops, hour, is_weekend, month):
     return [{"intersection": s,
-             "score": ml_risk_score(s, hour, is_weekend, weather),
-             "label": risk_label(ml_risk_score(s, hour, is_weekend, weather))[0],
-             "color": risk_label(ml_risk_score(s, hour, is_weekend, weather))[1]}
+             "score": ml_risk_score(s, hour, is_weekend, month),
+             "label": risk_label(ml_risk_score(s, hour, is_weekend, month))[0],
+             "color": risk_label(ml_risk_score(s, hour, is_weekend, month))[1]}
             for s in stops]
 
 def build_route_map(route, scored_stops, height=480):
@@ -301,53 +324,51 @@ def build_route_map(route, scored_stops, height=480):
 
     all_lats = [p[0] for p in points]
     all_lons = [p[1] for p in points]
-    sw = [max(42.490, min(all_lats)-0.004), max(-70.930, min(all_lons)-0.005)]
-    ne = [min(42.545, max(all_lats)+0.004), min(-70.855, max(all_lons)+0.005)]
+    sw = [max(42.490, min(all_lats) - 0.004), max(-70.930, min(all_lons) - 0.005)]
+    ne = [min(42.545, max(all_lats) + 0.004), min(-70.855, max(all_lons) + 0.005)]
 
     m = folium.Map(location=SALEM_CENTER, zoom_start=15,
                    tiles="CartoDB positron", min_zoom=13)
     m.fit_bounds([sw, ne])
-
     folium.PolyLine(points, color=color, weight=6, opacity=0.9).add_to(m)
 
     score_map = {s["intersection"]: s for s in scored_stops}
     for i, stop in enumerate(stops):
         lat, lon = SALEM_LOCATIONS[stop]
-        info  = score_map.get(stop, {"score": BASE_RISK.get(stop,40),
-                                     "label":"Moderate Risk","color":"#f59e0b"})
+        info  = score_map.get(stop, {"score": BASE_RISK.get(stop, 40),
+                                     "label": "Moderate Risk", "color": "#f59e0b"})
         score = info["score"]
-        clr   = info["color"]
         label = info["label"]
 
         if i == 0:
-            folium.Marker([lat,lon],
+            folium.Marker([lat, lon],
                 tooltip=f"🚀 START: {stop}",
                 popup=folium.Popup(f"<b>START</b><br>{stop}<br>Risk: {score}% — {label}",
                                    max_width=200),
                 icon=folium.Icon(color="blue", icon="home", prefix="fa")
             ).add_to(m)
-        elif i == len(stops)-1:
-            folium.Marker([lat,lon],
+        elif i == len(stops) - 1:
+            folium.Marker([lat, lon],
                 tooltip=f"🏁 DESTINATION: {stop}",
                 popup=folium.Popup(f"<b>DESTINATION</b><br>{stop}<br>Risk: {score}% — {label}",
                                    max_width=200),
                 icon=folium.Icon(color="green", icon="flag", prefix="fa")
             ).add_to(m)
         else:
-            dot_color = "#dc2626" if score>=70 else "#f59e0b" if score>=40 else "#22c55e"
+            dot_color = "#dc2626" if score >= 70 else "#f59e0b" if score >= 40 else "#22c55e"
             if score >= 70:
-                folium.CircleMarker([lat,lon], radius=22, color=dot_color,
+                folium.CircleMarker([lat, lon], radius=22, color=dot_color,
                     weight=2, fill=False, opacity=0.3).add_to(m)
-            folium.CircleMarker([lat,lon], radius=14, color="white", weight=2.5,
+            folium.CircleMarker([lat, lon], radius=14, color="white", weight=2.5,
                 fill=True, fill_color=dot_color, fill_opacity=0.92,
                 popup=folium.Popup(
                     f"<b>{stop}</b><br>Risk: <b>{score}%</b><br>{label}", max_width=220),
                 tooltip=f"{stop}: {score}% ({label})"
             ).add_to(m)
-            folium.Marker([lat,lon], icon=folium.DivIcon(
+            folium.Marker([lat, lon], icon=folium.DivIcon(
                 html=f'<div style="font-size:11px;font-weight:800;color:white;'
                      f'text-align:center;line-height:28px;width:28px">{score}</div>',
-                icon_size=(28,28), icon_anchor=(14,14))
+                icon_size=(28, 28), icon_anchor=(14, 14))
             ).add_to(m)
 
     m.get_root().html.add_child(folium.Element(f"""
@@ -375,26 +396,28 @@ st.markdown("""
 </div>""", unsafe_allow_html=True)
 
 # ================================================================
-# SIDEBAR
+# TRIP CONDITIONS — on the main page
 # ================================================================
-with st.sidebar:
-    st.markdown("### 🧭 Trip Conditions")
-    route_hour    = st.slider("🕐 Hour of Travel", 0, 23, 8)
-    am_pm         = "AM" if route_hour < 12 else "PM"
-    disp_h        = route_hour % 12
-    disp_h        = 12 if disp_h == 0 else disp_h
-    st.caption(f"Travel time: **{disp_h}:00 {am_pm}**")
+st.markdown("### 🧭 Trip Conditions")
+f1, f2, f3 = st.columns([2, 1, 2])
+with f1:
+    route_hour = st.slider("🕐 Hour of Travel", 0, 23, 8)
+with f2:
     route_weekend = st.toggle("📅 Weekend Trip", value=False)
-    route_weather = st.selectbox("🌤️ Weather", [
-        "Clear / Dry","Rain / Wet Roads","Snow / Ice","Fog / Low Visibility"])
-    st.divider()
-    st.markdown("### 📊 Safety Overview")
-    st.markdown("""
-    <div class="infra-status">
-      <div class="status-row"><span>Overall Risk</span><span class="badge-moderate">Moderate</span></div>
-      <div class="status-row"><span>Active Alerts</span><span class="status-num">3</span></div>
-      <div class="status-row"><span>Best Model Acc.</span><span class="status-num">71%</span></div>
-    </div>""", unsafe_allow_html=True)
+with f3:
+    route_month_name = st.selectbox("📅 Month", MONTH_NAMES)
+
+# Unpack month config
+month_cfg       = MONTH_CONFIG[route_month_name]
+route_month     = month_cfg["month"]
+month_modifier  = month_cfg["modifier"]
+month_season    = month_cfg["season"]
+
+am_pm  = "AM" if route_hour < 12 else "PM"
+disp_h = route_hour % 12
+disp_h = 12 if disp_h == 0 else disp_h
+
+st.divider()
 
 # ================================================================
 # TRIP CONDITIONS BAR
@@ -408,8 +431,8 @@ c1.markdown(f"""
 </div>""", unsafe_allow_html=True)
 c2.markdown(f"""
 <div style="background:white;border-radius:10px;padding:14px;text-align:center;border:1px solid #ddd6fe">
-  <div style="font-size:1rem;font-weight:700">{route_weather}</div>
-  <div style="font-size:.75rem;color:#6b7280;margin-top:2px">Weather Conditions</div>
+  <div style="font-size:1rem;font-weight:700">{route_month_name}</div>
+  <div style="font-size:.72rem;color:#6b7280;margin-top:2px">{month_season}</div>
 </div>""", unsafe_allow_html=True)
 c3.markdown(f"""
 <div style="background:{'#fee2e2' if is_rush else '#dcfce7'};border-radius:10px;padding:14px;
@@ -450,11 +473,11 @@ if USE_GMAPS:
 else:
     all_routes = get_fallback_routes(start_loc, end_loc)
 
-# Score each route
+# Score each route using the selected month
 for route in all_routes:
     route["scored_stops"] = score_route_stops(
-        route["stops"], route_hour, route_weekend, route_weather)
-    route["severity"]     = route_severity(route["scored_stops"])
+        route["stops"], route_hour, route_weekend, route_month)
+    route["severity"]     = route_severity(route["scored_stops"], month_modifier)
     sev_lbl, sev_col      = severity_label(route["severity"])
     route["sev_label"]    = sev_lbl
     route["sev_color"]    = sev_col
@@ -464,19 +487,27 @@ for route in all_routes:
     route["high_risk_ct"] = sum(1 for s in scores if s >= 70)
     route["riskiest"]     = max(route["scored_stops"], key=lambda x: x["score"])
 
-# Find safest route by severity score
-safest_route = min(all_routes, key=lambda r: r["severity"])
+# Identify fastest and safest
 fastest_route = min(all_routes, key=lambda r: r["duration"])
+safest_route  = min(all_routes, key=lambda r: r["severity"])
 
 # Best time to travel
-riskiest_stop_name = safest_route["riskiest"]["intersection"]
-best_time, best_score = find_safest_hour(riskiest_stop_name, route_weekend, route_weather)
+riskiest_stop_name    = safest_route["riskiest"]["intersection"]
+best_time, best_score = find_safest_hour(riskiest_stop_name, route_weekend, route_month)
 best_lbl, best_col    = risk_label(best_score)
 
-
+# ================================================================
+# DECIDE WHICH ROUTES TO DISPLAY
+# Always show fastest. Show alternate only if within 5 severity pts.
+# ================================================================
+display_routes = [fastest_route]
+for r in all_routes:
+    if r["label"] != fastest_route["label"]:
+        if fastest_route["severity"] - r["severity"] > -5:
+            display_routes.append(r)
 
 # ================================================================
-# RECOMMENDATION
+# RECOMMENDATION BANNER
 # ================================================================
 fastest_sev = fastest_route["sev_label"].split()[0]
 safest_sev  = safest_route["sev_label"].split()[0]
@@ -503,19 +534,25 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ROUTE COMPARISON CARDS
 # ================================================================
 st.markdown("### 📊 Route Comparison")
-cols = st.columns(len(all_routes))
 
-for i, (route, col) in enumerate(zip(all_routes, cols)):
+if len(display_routes) == 1:
+    st.caption("✅ No alternate route available — the fastest route is your only option for this trip.")
+
+cols = st.columns(len(display_routes))
+
+for i, (route, col) in enumerate(zip(display_routes, cols)):
     is_safest  = route["label"] == safest_route["label"]
     is_fastest = route["label"] == fastest_route["label"]
     border     = f"3px solid {route['sev_color']}" if is_safest else "1px solid #e5e7eb"
-    badge      = ""
+
     if is_safest and is_fastest:
         badge = '<span style="background:#7c3aed;color:white;border-radius:20px;padding:2px 10px;font-size:.7rem;font-weight:700">⭐ BEST CHOICE</span>'
-    elif is_safest:
+    elif is_safest and not is_fastest:
         badge = '<span style="background:#16a34a;color:white;border-radius:20px;padding:2px 10px;font-size:.7rem;font-weight:700">🛡️ SAFEST</span>'
-    elif is_fastest:
+    elif is_fastest and not is_safest:
         badge = '<span style="background:#7c3aed;color:white;border-radius:20px;padding:2px 10px;font-size:.7rem;font-weight:700">⚡ FASTEST</span>'
+    else:
+        badge = ""
 
     col.markdown(f"""
     <div style="background:white;border:{border};border-radius:14px;padding:18px;
@@ -527,7 +564,6 @@ for i, (route, col) in enumerate(zip(all_routes, cols)):
         </div>
         <div>{badge}</div>
       </div>
-
       <div style="background:{route['sev_color']}18;border-radius:8px;padding:10px;
                   text-align:center;margin-bottom:12px">
         <div style="font-family:'Syne',sans-serif;font-size:2rem;font-weight:800;
@@ -536,7 +572,6 @@ for i, (route, col) in enumerate(zip(all_routes, cols)):
           {route['sev_label']}</div>
         <div style="font-size:.68rem;color:#9ca3af;margin-top:2px">Route Severity Score</div>
       </div>
-
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.78rem">
         <div style="background:#f9fafb;border-radius:6px;padding:8px;text-align:center">
           <div style="font-weight:700;color:#374151">{format_duration(route['duration'])}</div>
@@ -555,7 +590,6 @@ for i, (route, col) in enumerate(zip(all_routes, cols)):
           <div style="color:#9ca3af;font-size:.68rem">High-Risk Stops</div>
         </div>
       </div>
-
       <div style="margin-top:10px;font-size:.75rem;color:#6b7280">
         ⚠️ Highest risk: <b>{route['riskiest']['intersection'].split('/')[0].strip()}</b>
         ({route['max_risk']:.0f}%)
@@ -565,46 +599,64 @@ for i, (route, col) in enumerate(zip(all_routes, cols)):
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ================================================================
-# SEVERITY FORMULA EXPLAINED
+# SEVERITY FORMULA EXPANDER
 # ================================================================
 with st.expander("📐 How is Route Severity calculated?"):
     st.markdown(f"""
-**Route Severity Formula:**
+**Route Severity Formula** *(based on MataVision Random Forest feature importances)*
 
 ```
-Severity = 0.5 × Mean Stop Risk
-         + 0.3 × Max Stop Risk
-         + 0.2 × (% High-Risk Stops × 100)
+Severity = 0.40 × Mean Stop Risk
+         + 0.40 × Max Stop Risk
+         + 0.20 × (% High-Risk Stops × 100)
+         + Month Modifier
 ```
 
 | Component | Weight | Why |
 |---|---|---|
-| **Mean Stop Risk** | 50% | Overall average danger across the whole route |
-| **Max Stop Risk** | 30% | The single worst intersection — a dangerous outlier matters |
-| **% High-Risk Stops** | 20% | How many stops are genuinely dangerous (70%+) |
+| **Mean Stop Risk** | 40% | Average danger across all intersections on the route |
+| **Max Stop Risk** | 40% | Worst intersection carries equal weight — one dangerous stop defines a route |
+| **% High-Risk Stops** | 20% | How many stops exceed the 70% danger threshold |
+| **Month Modifier** | +varies | Route-level adjustment from Month feature in RF model |
+
+**Month modifiers (current: {route_month_name} → {'+' if month_modifier >= 0 else ''}{month_modifier} pts):**
+
+| Month | Modifier | Why |
+|---|---|---|
+| January | +10 | Winter ice & snow |
+| February | +8 | Winter conditions |
+| March | +2 | Early spring, variable conditions |
+| April | 0 | Neutral |
+| May | -2 | Mild spring |
+| June | -4 | Good conditions |
+| July | -5 | Best driving month |
+| August | -3 | Late summer |
+| September | +2 | Fall begins |
+| October | +12 | Salem Halloween traffic surge |
+| November | +5 | Late fall, wet roads |
+| December | +8 | Winter onset |
 
 **Severity Thresholds:**
 - 🟢 **Low Severity** — score below 35
 - 🟡 **Moderate Severity** — score 35–59
 - 🔴 **High Severity** — score 60+
 
-The formula prioritizes average risk (50%) so one very dangerous stop doesn't
-unfairly penalize an otherwise safe route — but still accounts for it through
-the max risk component (30%).
+> **Note:** Per-intersection **Risk Score (%)** and **Route Severity Score** are different.
+> Risk Score measures danger at one intersection. Severity Score summarizes the entire route.
     """)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ================================================================
-# ROUTE MAPS — one per route
+# ROUTE MAPS
 # ================================================================
 st.markdown("### 🗺️ Route Maps")
 st.caption("Each map shows the actual road path and ML risk scores for intersections on that route")
 
-map_cols = st.columns(len(all_routes))
-for route, col in zip(all_routes, map_cols):
+map_cols = st.columns(len(display_routes))
+for route, col in zip(display_routes, map_cols):
     with col:
-        is_safest = route["label"] == safest_route["label"]
+        is_safest    = route["label"] == safest_route["label"]
         label_suffix = " ⭐" if is_safest else ""
         st.markdown(f"**{route['icon']} {route['label']}{label_suffix}** — "
                     f"Severity: `{route['severity']}` ({route['sev_label']})")
@@ -612,8 +664,6 @@ for route, col in zip(all_routes, map_cols):
         st_html(m._repr_html_(), height=420)
 
 st.markdown("<br>", unsafe_allow_html=True)
-
-
 
 # ================================================================
 # STOP BREAKDOWN FOR RECOMMENDED ROUTE
@@ -626,8 +676,9 @@ for i, info in enumerate(safest_route["scored_stops"]):
     color  = info["color"]
     label  = info["label"]
     name   = info["intersection"]
-    prefix = "🚀 Start" if i==0 else ("🏁 Destination" if i==len(safest_route["scored_stops"])-1 else f"Stop {i}")
-    icon   = "🔴" if score>=70 else "🟡" if score>=40 else "🟢"
+    prefix = "🚀 Start" if i == 0 else (
+             "🏁 Destination" if i == len(safest_route["scored_stops"]) - 1 else f"Stop {i}")
+    icon   = "🔴" if score >= 70 else "🟡" if score >= 40 else "🟢"
 
     st.markdown(f"""
     <div style="background:white;border:1px solid #e5e7eb;border-radius:12px;
@@ -654,17 +705,20 @@ for i, info in enumerate(safest_route["scored_stops"]):
 # ================================================================
 with st.expander("🤖 How does the ML model score these routes?"):
     st.markdown(f"""
-**Risk scores use Random Forest feature importance weights trained on Salem crash data:**
+**Per-intersection risk scores reflect MataVision Random Forest feature importances**
+*(trained on Salem crash data — Capstone_3.ipynb)*
 
-| Feature | Weight | Effect on This Trip |
+| Feature | RF Importance | Effect on This Trip |
 |---|---|---|
-| **Hour of Day** | 38% | {"PM rush +18pts ⚠️" if 16<=route_hour<=18 else "AM rush +12pts ⚠️" if 7<=route_hour<=9 else "Night +8pts" if route_hour>=22 or route_hour<=5 else "Midday -5pts ✅" if 10<=route_hour<=14 else "Normal 0pts"} |
-| **Month / Season** | 28% | Built into base intersection scores from crash history |
-| **Is Weekend** | 14% | {"Weekend -8pts — lower traffic ✅" if route_weekend else "Weekday +4pts — higher commuter traffic"} |
-| **Is Rush Hour** | 12% | {"Rush hour active ⚠️" if is_rush else "Not rush hour ✅"} |
-| **At Intersection** | 8% | Each scored stop is a known Salem intersection |
+| **Hour of Day** | ~40% (strongest) | {"PM rush +18pts ⚠️" if 16<=route_hour<=18 else "AM rush +12pts ⚠️" if 7<=route_hour<=9 else "Night +8pts" if route_hour>=22 or route_hour<=5 else "Midday -5pts ✅" if 10<=route_hour<=14 else "Normal 0pts"} |
+| **Month** | ~30% (2nd strongest) | {route_month_name} (month {route_month}) → {'+' if month_modifier >= 0 else ''}{month_modifier} pts per stop |
+| **Is Weekend** | ~12% | {"Weekend -8pts — lower traffic ✅" if route_weekend else "Weekday +4pts — higher commuter traffic"} |
+| **Is Rush Hour** | ~10% | {"Rush hour active ⚠️" if is_rush else "Not rush hour ✅"} |
+| **At Intersection** | ~8% (weakest) | Each scored stop is a known Salem intersection |
 
-**Key insight:** Hour of Day is the strongest predictor (38%). In a small city like Salem,
-WHEN you drive matters as much as WHICH route you take — which is why the app
-shows both route severity AND the safest travel time.
+**Key insight from your model:** Hour of Day is the strongest predictor (~40%).
+Month is second (~30%) — October scores highest in Salem due to the Halloween
+traffic surge, while July scores lowest with the calmest driving conditions.
+Weekend and Rush Hour have smaller but meaningful effects. At_Intersection
+contributed the least, consistent with Salem data showing mid-block risk too.
     """)

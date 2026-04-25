@@ -3,8 +3,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
 import os
-import urllib.request
-import json
 
 st.set_page_config(
     page_title="MataVision — Insurance Analytics",
@@ -37,44 +35,30 @@ st.divider()
 st.markdown("""
 <div class="page-header">
   <h1>📋 Insurance Risk Analytics</h1>
-  <p>Review crash severity patterns by client location, weather, and time of day — Salem, MA</p>
+  <p>Review crash severity patterns by client location and time of year — Salem, MA</p>
 </div>""", unsafe_allow_html=True)
 
 # ================================================================
-# LIVE WEATHER
+# MONTH CONFIG — matches RF model Month feature exactly
 # ================================================================
-@st.cache_data(ttl=1800)
-def get_salem_weather():
-    try:
-        url = ("https://api.open-meteo.com/v1/forecast"
-               "?latitude=42.519&longitude=-70.896"
-               "&current=temperature_2m,precipitation,weathercode,windspeed_10m"
-               "&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=America/New_York")
-        with urllib.request.urlopen(url, timeout=5) as r:
-            data = json.loads(r.read())
-        c = data["current"]
-        code = c["weathercode"]
-        temp = c["temperature_2m"]
-        wind = c["windspeed_10m"]
-        precip = c["precipitation"]
-        if code == 0:                      label,icon,risk_mod = "Clear",        "☀️", -5
-        elif code in [1,2,3]:             label,icon,risk_mod = "Partly Cloudy", "⛅",  0
-        elif code in [45,48]:             label,icon,risk_mod = "Foggy",         "🌫️",+18
-        elif code in [51,53,55,61,63,65]: label,icon,risk_mod = "Rain",          "🌧️",+15
-        elif code in [71,73,75,77]:       label,icon,risk_mod = "Snow",          "❄️", +22
-        elif code in [80,81,82]:          label,icon,risk_mod = "Rain Showers",  "🌦️",+12
-        elif code in [95,96,99]:          label,icon,risk_mod = "Thunderstorm",  "⛈️",+25
-        else:                             label,icon,risk_mod = "Cloudy",        "☁️",  +3
-        return {"label":label,"icon":icon,"risk_mod":risk_mod,
-                "temp":temp,"wind":wind,"precip":precip,"live":True}
-    except:
-        return {"label":"Unknown","icon":"🌡️","risk_mod":0,
-                "temp":"--","wind":"--","precip":0,"live":False}
-
-weather = get_salem_weather()
+MONTH_CONFIG = {
+    "January":   {"month": 1,  "modifier": +10, "season": "☃️ Winter"},
+    "February":  {"month": 2,  "modifier": +8,  "season": "☃️ Winter"},
+    "March":     {"month": 3,  "modifier": +2,  "season": "🌸 Spring"},
+    "April":     {"month": 4,  "modifier": 0,   "season": "🌸 Spring"},
+    "May":       {"month": 5,  "modifier": -2,  "season": "🌸 Spring"},
+    "June":      {"month": 6,  "modifier": -4,  "season": "☀️ Summer"},
+    "July":      {"month": 7,  "modifier": -5,  "season": "☀️ Summer"},
+    "August":    {"month": 8,  "modifier": -3,  "season": "☀️ Summer"},
+    "September": {"month": 9,  "modifier": +2,  "season": "🍂 Fall"},
+    "October":   {"month": 10, "modifier": +12, "season": "🍂 Fall"},
+    "November":  {"month": 11, "modifier": +5,  "season": "🍂 Fall"},
+    "December":  {"month": 12, "modifier": +8,  "season": "☃️ Winter"},
+}
+MONTH_NAMES = list(MONTH_CONFIG.keys())
 
 # ================================================================
-# LOCATION RISK DATA — per Salem neighborhood/intersection
+# LOCATION RISK DATA
 # ================================================================
 LOCATION_DATA = {
     "Derby St / Washington Sq": {
@@ -135,19 +119,13 @@ LOCATION_DATA = {
         "base_risk": 45, "crashes": 40, "avg_severity": 1.4,
         "peak_hour": "5-6 PM", "wet_crashes_pct": 24, "night_crashes_pct": 20,
         "zone": "Downtown", "premium_mod": "+5%",
-        "desc": "Evening commute traffic. Icy conditions in winter significantly raise risk."
+        "desc": "Evening commute traffic. Winter months significantly raise risk."
     },
 }
 
-def adjusted_risk(location, weather_mod, hour):
-    """Calculate ML-adjusted risk score for a location given current conditions."""
+def adjusted_risk(location, month_modifier):
     base = LOCATION_DATA[location]["base_risk"]
-    if 16 <= hour <= 18:          h_mod = +18
-    elif 7 <= hour <= 9:          h_mod = +12
-    elif hour >= 22 or hour <= 5: h_mod = +8
-    elif 10 <= hour <= 14:        h_mod = -5
-    else:                         h_mod = 0
-    return max(0, min(100, base + h_mod + weather_mod))
+    return max(0, min(100, base + month_modifier))
 
 def risk_label(score):
     if score >= 70:  return "High Risk",     "#dc2626"
@@ -160,104 +138,82 @@ def risk_label(score):
 with st.sidebar:
     st.markdown("### 👤 Client Profile")
     client_location = st.selectbox(
-        "📍 Client's Home/Commute Location",
+        "📍 Client Location",
         list(LOCATION_DATA.keys()),
         help="Select the intersection nearest to where the client lives or drives most"
     )
-    client_hour = st.slider("🕐 Primary Commute Hour", 0, 23, 8)
-    am_pm = "AM" if client_hour < 12 else "PM"
-    h12   = client_hour % 12
-    h12   = 12 if h12 == 0 else h12
-    st.caption(f"Commute time: **{h12}:00 {am_pm}**")
-
+    client_month_name = st.selectbox("📅 Month", MONTH_NAMES)
     client_type = st.selectbox("🚗 Policy Type", [
         "Personal Auto", "Commercial Vehicle", "Fleet Policy"
     ])
     years_driving = st.slider("📅 Years Driving in Salem", 0, 20, 3)
-    st.divider()
-    st.markdown("### 🌤️ Current Conditions")
-    weather_src = "Live" if weather["live"] else "Cached"
-    st.markdown(f"""
-    <div style="background:#f5f3ff;border-radius:10px;padding:12px;font-size:.85rem">
-      <b>{weather["icon"]} {weather["label"]}</b>
-      <span style="color:#9ca3af;font-size:.72rem;margin-left:6px">{weather_src}</span><br>
-      {weather["temp"]}°F · Wind {weather["wind"]} mph · Precip {weather["precip"]} mm<br>
-      <span style="color:{'#dc2626' if weather['risk_mod']>=15 else '#d97706' if weather['risk_mod']>=8 else '#16a34a'};font-weight:600">
-        {"⚠️ High road risk today" if weather["risk_mod"]>=15 else "⚠️ Elevated risk today" if weather["risk_mod"]>=8 else "✅ Normal conditions"}
-      </span>
-    </div>""", unsafe_allow_html=True)
+
+# Unpack month config
+month_cfg      = MONTH_CONFIG[client_month_name]
+client_month   = month_cfg["month"]
+month_modifier = month_cfg["modifier"]
+month_season   = month_cfg["season"]
 
 # ================================================================
 # COMPUTE CLIENT RISK PROFILE
 # ================================================================
-loc_data    = LOCATION_DATA[client_location]
-curr_score  = adjusted_risk(client_location, weather["risk_mod"], client_hour)
-base_score  = loc_data["base_risk"]
+loc_data   = LOCATION_DATA[client_location]
+curr_score = adjusted_risk(client_location, month_modifier)
+base_score = loc_data["base_risk"]
 curr_lbl, curr_col = risk_label(curr_score)
-experience_mod = max(0, (10 - min(years_driving, 10)) * 0.5)
 
 # ================================================================
-# PREMIUM CALCULATION — realistic, transparent, step-by-step
+# PREMIUM CALCULATION
 # ================================================================
-# 1. Base premium (Massachusetts avg personal auto)
-base_premium = 1_200
-
-# 2. Location risk modifier — from crash data at that intersection
-loc_mod_pct = int(loc_data["premium_mod"].replace("%","").replace("+",""))
-loc_adj = int(base_premium * loc_mod_pct / 100)
-
-# 3. Severity surcharge — avg severity above 1.0 adds cost
-#    Each 0.1 above 1.0 = +$15 surcharge
+base_premium       = 1_200
+loc_mod_pct        = int(loc_data["premium_mod"].replace("%","").replace("+",""))
+loc_adj            = int(base_premium * loc_mod_pct / 100)
 severity_surcharge = int(max(0, (loc_data["avg_severity"] - 1.0) * 150))
-
-# 4. Commute hour surcharge — peak hour commuters pay more
-if 7 <= client_hour <= 9 or 16 <= client_hour <= 18:
-    commute_surcharge = 80   # rush hour commuter
-elif client_hour >= 22 or client_hour <= 5:
-    commute_surcharge = 60   # night driver
-else:
-    commute_surcharge = 0
-
-# 5. Policy type modifier
-policy_mods = {"Personal Auto": 0, "Commercial Vehicle": 350, "Fleet Policy": 600}
-policy_adj = policy_mods[client_type]
-
-# 6. Experience discount — more years = lower premium
+policy_mods        = {"Personal Auto": 0, "Commercial Vehicle": 350, "Fleet Policy": 600}
+policy_adj         = policy_mods[client_type]
 experience_discount = min(years_driving * 25, 250)
 
-# 7. Total — all integers, no floats
-est_premium = base_premium + loc_adj + severity_surcharge + commute_surcharge + policy_adj - experience_discount
-est_premium = max(800, est_premium)  # floor at $800
+# Month risk surcharge — higher risk months cost more
+month_surcharge = max(0, month_modifier * 4)  # each risk point = $4
+
+est_premium = (base_premium + loc_adj + severity_surcharge +
+               policy_adj + month_surcharge - experience_discount)
+est_premium = max(800, est_premium)
 
 # ================================================================
 # CLIENT RISK SUMMARY
 # ================================================================
 st.markdown(f"### Risk Profile: **{client_location}**")
-st.markdown(f"*{loc_data['zone']} zone · {client_type} · {years_driving} years driving*")
+st.markdown(f"*{loc_data['zone']} zone · {client_type} · {years_driving} years driving · {client_month_name} ({month_season})*")
 st.markdown("<br>", unsafe_allow_html=True)
 
-# Live weather risk banner
-w_bg  = "#fee2e2" if weather["risk_mod"] >= 15 else "#fef3c7" if weather["risk_mod"] >= 8 else "#f0fdf4"
-w_bdr = "#dc2626" if weather["risk_mod"] >= 15 else "#d97706" if weather["risk_mod"] >= 8 else "#16a34a"
+# Month context banner
+m_bg  = "#fee2e2" if month_modifier >= 8 else "#fef3c7" if month_modifier >= 2 else "#f0fdf4"
+m_bdr = "#dc2626" if month_modifier >= 8 else "#d97706" if month_modifier >= 2 else "#16a34a"
+m_msg = ("⚠️ High-risk month — winter conditions or Salem October surge"
+         if month_modifier >= 8 else
+         "⚠️ Slightly elevated risk this time of year"
+         if month_modifier >= 2 else
+         "✅ Lower-risk time of year — good driving conditions")
 st.markdown(f"""
-<div style="background:{w_bg};border:1px solid {w_bdr};border-radius:10px;
+<div style="background:{m_bg};border:1px solid {m_bdr};border-radius:10px;
             padding:12px 18px;margin-bottom:16px;font-size:.85rem">
-  <b>{weather["icon"]} Current Salem Weather:</b> {weather["label"]} · {weather["temp"]}°F ·
-  Wind {weather["wind"]} mph
-  {"— <b>⚠️ Wet/icy conditions increase crash risk by +" + str(weather["risk_mod"]) + " points today</b>" if weather["risk_mod"] > 0
-   else " — ✅ Good driving conditions"}
-  <span style="color:#9ca3af;font-size:.72rem;margin-left:8px">({'Live data' if weather['live'] else 'Cached'})</span>
+  <b>📅 {client_month_name} ({month_season})</b> — {m_msg}
+  <span style="color:#6b7280;font-size:.78rem;margin-left:8px">
+    Month risk adjustment: {'+' if month_modifier >= 0 else ''}{month_modifier} pts
+    · Based on Salem crash data patterns
+  </span>
 </div>""", unsafe_allow_html=True)
 
 # Risk score cards
-r1,r2,r3,r4 = st.columns(4)
+r1, r2, r3, r4 = st.columns(4)
 
 r1.markdown(f"""
 <div style="background:white;border:2px solid {curr_col};border-radius:14px;padding:18px;text-align:center">
   <div style="font-size:.75rem;color:#9ca3af;margin-bottom:4px">CURRENT RISK SCORE</div>
   <div style="font-family:'Syne',sans-serif;font-size:2.5rem;font-weight:800;color:{curr_col}">{curr_score}</div>
   <div style="font-size:.8rem;font-weight:600;color:{curr_col}">{curr_lbl}</div>
-  <div style="font-size:.7rem;color:#9ca3af;margin-top:4px">incl. live weather + commute hour</div>
+  <div style="font-size:.7rem;color:#9ca3af;margin-top:4px">location + month adjustment</div>
 </div>""", unsafe_allow_html=True)
 
 r2.markdown(f"""
@@ -294,12 +250,12 @@ with st.expander("💰 How is the premium calculated? Click to see full breakdow
 | **Base Premium** | $1,200 | Massachusetts average personal auto policy |
 | **Location Adjustment ({loc_data['premium_mod']})** | ${loc_adj:+,} | {client_location} has {loc_data['crashes']} recorded crashes |
 | **Severity Surcharge** | +${severity_surcharge} | Avg crash severity {loc_data['avg_severity']}/3.0 at this location |
-| **Commute Hour** | +${commute_surcharge} | {"Rush hour commuter (7-9AM / 4-6PM)" if commute_surcharge == 80 else "Night driver (10PM-5AM)" if commute_surcharge == 60 else "Off-peak commuter — no surcharge"} |
+| **Month Risk Surcharge** | +${month_surcharge} | {client_month_name} — {'+' if month_modifier >= 0 else ''}{month_modifier} pt month adjustment × $4 |
 | **Policy Type** | +${policy_adj} | {client_type} |
 | **Experience Discount** | -${min(years_driving*25,250):,} | {years_driving} years driving in Salem (max -$250) |
-| **Estimated Annual Premium** | **${est_premium:,}** | Rounded, minimum $800 |
+| **Estimated Annual Premium** | **${est_premium:,}** | Minimum $800 |
 
-> *Note: This is an ML-informed estimate based on Salem crash data patterns.
+> *This is an ML-informed estimate based on Salem crash data patterns.
 > Actual premiums are set by licensed insurers and depend on additional factors
 > including driving record, vehicle type, and credit score.*
     """)
@@ -319,31 +275,34 @@ st.markdown(f"""
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ================================================================
-# RISK BY HOUR — for this location
+# RISK BY HOUR — for this location across all hours
 # ================================================================
 st.markdown("### 📊 Crash Severity Patterns for This Location")
-c1,c2 = st.columns(2)
+c1, c2 = st.columns(2)
 
 with c1:
     st.markdown(f"**Risk Score by Hour of Day — {client_location.split('/')[0].strip()}**")
     hours = list(range(24))
-    hourly_scores = [adjusted_risk(client_location, weather["risk_mod"], h) for h in hours]
-    bar_colors = ["#dc2626" if s>=70 else "#f59e0b" if s>=40 else "#22c55e" for s in hourly_scores]
+    hour_mods = {h: (+18 if 16<=h<=18 else +12 if 7<=h<=9 else
+                     +8 if h>=22 or h<=5 else -5 if 10<=h<=14 else 0)
+                 for h in hours}
+    hourly_scores = [max(0, min(100, base_score + hour_mods[h] + month_modifier))
+                     for h in hours]
+    bar_colors = ["#dc2626" if s>=70 else "#f59e0b" if s>=40 else "#22c55e"
+                  for s in hourly_scores]
     fig_h = go.Figure(go.Bar(x=hours, y=hourly_scores, marker_color=bar_colors))
-    # Mark client's commute hour
-    fig_h.add_vline(x=client_hour, line_dash="dash", line_color="#7c3aed",
-                    annotation_text=f"Client commute ({h12}:00 {am_pm})",
-                    annotation_position="top right")
     fig_h.add_hline(y=70, line_dash="dot", line_color="#dc2626",
                     annotation_text="High Risk threshold")
     fig_h.add_hline(y=40, line_dash="dot", line_color="#f59e0b",
                     annotation_text="Moderate threshold")
-    fig_h.update_layout(height=300, margin=dict(l=0,r=0,t=20,b=0),
+    fig_h.update_layout(
+        height=300, margin=dict(l=0,r=0,t=20,b=0),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(title="Hour of Day", showgrid=False, tickvals=list(range(0,24,2))),
         yaxis=dict(title="Risk Score", range=[0,105], gridcolor="#f3f4f6"),
-        showlegend=False)
-    st.plotly_chart(fig_h, use_container_width=True, config={"displayModeBar":False})
+        showlegend=False
+    )
+    st.plotly_chart(fig_h, use_container_width=True, config={"displayModeBar": False})
 
 with c2:
     st.markdown("**Crash Cause Breakdown — This Location**")
@@ -351,31 +310,33 @@ with c2:
     night_pct = loc_data["night_crashes_pct"]
     other_pct = 100 - wet_pct - night_pct
     fig_pie = go.Figure(go.Pie(
-        labels=["Wet / Rainy Roads","Night / Low Visibility","Other Conditions"],
+        labels=["Wet / Rainy Roads", "Night / Low Visibility", "Other Conditions"],
         values=[wet_pct, night_pct, other_pct],
         hole=0.55,
-        marker_colors=["#2563eb","#7c3aed","#9ca3af"],
+        marker_colors=["#2563eb", "#7c3aed", "#9ca3af"],
         textinfo="label+percent"
     ))
-    fig_pie.update_layout(height=300, margin=dict(l=0,r=0,t=10,b=20),
+    fig_pie.update_layout(
+        height=300, margin=dict(l=0,r=0,t=10,b=20),
         paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h",y=-0.2,font=dict(size=10)))
-    st.plotly_chart(fig_pie, use_container_width=True, config={"displayModeBar":False})
+        legend=dict(orientation="h", y=-0.2, font=dict(size=10))
+    )
+    st.plotly_chart(fig_pie, use_container_width=True, config={"displayModeBar": False})
 
 # ================================================================
 # COMPARE ALL LOCATIONS
 # ================================================================
 st.markdown("### 📍 Location Risk Comparison — All Salem Zones")
-st.markdown('<div style="font-size:.82rem;color:#6b7280;margin-bottom:12px">Compare your client\'s location against all tracked intersections — adjusted for current weather conditions</div>',
+st.markdown(f'<div style="font-size:.82rem;color:#6b7280;margin-bottom:12px">All locations adjusted for {client_month_name} ({month_season}) conditions</div>',
             unsafe_allow_html=True)
 
 comp_data = []
 for loc, d in LOCATION_DATA.items():
-    score = adjusted_risk(loc, weather["risk_mod"], client_hour)
+    score = adjusted_risk(loc, month_modifier)
     lbl, col = risk_label(score)
     comp_data.append({
         "Location": loc, "Zone": d["zone"],
-        "Current Risk Score": score,
+        "Risk Score": score,
         "Base Risk": d["base_risk"],
         "Risk Level": lbl,
         "Crashes": d["crashes"],
@@ -384,18 +345,17 @@ for loc, d in LOCATION_DATA.items():
         "Selected": "★ YOUR CLIENT" if loc == client_location else ""
     })
 
-comp_df = pd.DataFrame(comp_data).sort_values("Current Risk Score", ascending=False)
+comp_df = pd.DataFrame(comp_data).sort_values("Risk Score", ascending=False)
 
-# Bar chart comparison
 bar_cols = ["#7c3aed" if r == client_location else
             "#dc2626" if s >= 70 else "#f59e0b" if s >= 40 else "#22c55e"
-            for r, s in zip(comp_df["Location"], comp_df["Current Risk Score"])]
+            for r, s in zip(comp_df["Location"], comp_df["Risk Score"])]
 
 fig_comp = go.Figure(go.Bar(
-    x=[l.split("/")[0].strip() + "..." if len(l) > 20 else l for l in comp_df["Location"]],
-    y=comp_df["Current Risk Score"],
+    x=[l.split("/")[0].strip() for l in comp_df["Location"]],
+    y=comp_df["Risk Score"],
     marker_color=bar_cols,
-    text=comp_df["Current Risk Score"],
+    text=comp_df["Risk Score"],
     textposition="outside",
     customdata=comp_df["Location"],
     hovertemplate="<b>%{customdata}</b><br>Risk Score: %{y}<extra></extra>"
@@ -409,9 +369,8 @@ fig_comp.update_layout(
     yaxis=dict(range=[0,115], gridcolor="#f3f4f6"),
     showlegend=False
 )
-st.plotly_chart(fig_comp, use_container_width=True, config={"displayModeBar":False})
+st.plotly_chart(fig_comp, use_container_width=True, config={"displayModeBar": False})
 
-# Table
 def style_risk_lbl(val):
     if "High" in val:     return "color:#dc2626;font-weight:bold"
     if "Moderate" in val: return "color:#d97706;font-weight:bold"
@@ -421,41 +380,14 @@ def style_selected(val):
     if val == "★ YOUR CLIENT": return "background:#f5f3ff;color:#7c3aed;font-weight:bold"
     return ""
 
-styled_comp = comp_df[["Location","Zone","Current Risk Score","Risk Level",
+styled_comp = comp_df[["Location","Zone","Risk Score","Risk Level",
                         "Crashes","Peak Hour","Premium Adjustment","Selected"]].style \
     .map(style_risk_lbl, subset=["Risk Level"]) \
     .map(style_selected, subset=["Selected"]) \
-        .hide(axis="index")
+    .hide(axis="index")
 st.dataframe(styled_comp, use_container_width=True, height=380)
 
-# ================================================================
-# MODEL PERFORMANCE SUMMARY
-# ================================================================
-st.markdown("<br>", unsafe_allow_html=True)
-st.markdown("### 🤖 ML Model Performance Summary")
-st.markdown('<div style="font-size:.85rem;color:#6b7280;margin-bottom:12px">Actual model results — Salem crash data with features: Hour, Month, Is_Weekend, Is_Rush_Hour, At_Intersection</div>',
-            unsafe_allow_html=True)
 
-models     = ["Dummy (Baseline)","Logistic Regression","Logistic Regression + SMOTE",
-              "Random Forest (base)","Random Forest + SMOTE",
-              "Binary RF (balanced CV)","RF Cross-Validation (5-fold avg)","Tuned RF (GridSearch)"]
-accuracies = [74.3,33.0,39.0,56.0,52.0,55.0,67.0,71.0]
-bar_colors_m = ["#9ca3af" if m=="Dummy (Baseline)" else
-                "#7c3aed" if m=="Tuned RF (GridSearch)" else "#2563eb"
-                for m in models]
-
-fig_m = go.Figure(go.Bar(y=models,x=accuracies,orientation="h",
-    marker_color=bar_colors_m,text=[f"{a}%" for a in accuracies],textposition="outside"))
-fig_m.add_vline(x=74.3,line_dash="dash",line_color="#9ca3af",
-                annotation_text="Dummy baseline (misleading)",annotation_position="top right")
-fig_m.update_layout(height=360,margin=dict(l=0,r=70,t=20,b=0),
-    paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
-    xaxis=dict(range=[0,88],ticksuffix="%",gridcolor="#f3f4f6"),
-    yaxis=dict(showgrid=False),showlegend=False)
-st.plotly_chart(fig_m,use_container_width=True,config={"displayModeBar":False})
-
-st.info("The Dummy classifier's 74.3% is misleading — it only predicts the majority class. "
-        "The best-performing model is the Tuned Random Forest at 71%.", icon="ℹ️")
 
 st.markdown("""<div class="footer">
   🛡️ <strong>MataVision</strong> · Insurance Analytics · Salem, MA Capstone Project
