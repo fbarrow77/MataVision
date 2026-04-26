@@ -8,7 +8,7 @@ st.set_page_config(
     page_title="MataVision — Insurance Analytics",
     page_icon="📋",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 css_path = os.path.join(os.path.dirname(__file__), '..', 'styles.css')
@@ -133,20 +133,26 @@ def risk_label(score):
     return "Low Risk", "#16a34a"
 
 # ================================================================
-# SIDEBAR — CLIENT PROFILE
+# CLIENT PROFILE FILTERS — on main page, no sidebar
 # ================================================================
-with st.sidebar:
-    st.markdown("### 👤 Client Profile")
+st.markdown("### 👤 Client Profile")
+f1, f2, f3, f4 = st.columns([2, 1, 1, 1])
+with f1:
     client_location = st.selectbox(
         "📍 Client Location",
         list(LOCATION_DATA.keys()),
         help="Select the intersection nearest to where the client lives or drives most"
     )
+with f2:
     client_month_name = st.selectbox("📅 Month", MONTH_NAMES)
+with f3:
     client_type = st.selectbox("🚗 Policy Type", [
         "Personal Auto", "Commercial Vehicle", "Fleet Policy"
     ])
+with f4:
     years_driving = st.slider("📅 Years Driving in Salem", 0, 20, 3)
+
+st.divider()
 
 # Unpack month config
 month_cfg      = MONTH_CONFIG[client_month_name]
@@ -164,17 +170,17 @@ curr_lbl, curr_col = risk_label(curr_score)
 
 # ================================================================
 # PREMIUM CALCULATION
+# Base: $1,200 — Massachusetts average liability-only auto premium
+# Source: The Zebra, MA auto insurance data ($1,201/yr)
 # ================================================================
-base_premium       = 1_200
-loc_mod_pct        = int(loc_data["premium_mod"].replace("%","").replace("+",""))
-loc_adj            = int(base_premium * loc_mod_pct / 100)
-severity_surcharge = int(max(0, (loc_data["avg_severity"] - 1.0) * 150))
-policy_mods        = {"Personal Auto": 0, "Commercial Vehicle": 350, "Fleet Policy": 600}
-policy_adj         = policy_mods[client_type]
+base_premium        = 1_200
+loc_mod_pct         = int(loc_data["premium_mod"].replace("%","").replace("+",""))
+loc_adj             = int(base_premium * loc_mod_pct / 100)
+severity_surcharge  = int(max(0, (loc_data["avg_severity"] - 1.0) * 150))
+policy_mods         = {"Personal Auto": 0, "Commercial Vehicle": 350, "Fleet Policy": 600}
+policy_adj          = policy_mods[client_type]
 experience_discount = min(years_driving * 25, 250)
-
-# Month risk surcharge — higher risk months cost more
-month_surcharge = max(0, month_modifier * 4)  # each risk point = $4
+month_surcharge     = max(0, month_modifier * 4)  # each risk point = $4
 
 est_premium = (base_premium + loc_adj + severity_surcharge +
                policy_adj + month_surcharge - experience_discount)
@@ -247,13 +253,13 @@ with st.expander("💰 How is the premium calculated? Click to see full breakdow
     st.markdown(f"""
 | Component | Amount | Reason |
 |---|---|---|
-| **Base Premium** | $1,200 | Massachusetts average personal auto policy |
+| **Base Premium** | $1,200 | Massachusetts avg liability-only auto policy (The Zebra: $1,201/yr) |
 | **Location Adjustment ({loc_data['premium_mod']})** | ${loc_adj:+,} | {client_location} has {loc_data['crashes']} recorded crashes |
-| **Severity Surcharge** | +${severity_surcharge} | Avg crash severity {loc_data['avg_severity']}/3.0 at this location |
-| **Month Risk Surcharge** | +${month_surcharge} | {client_month_name} — {'+' if month_modifier >= 0 else ''}{month_modifier} pt month adjustment × $4 |
+| **Severity Surcharge** | +${severity_surcharge} | Avg crash severity {loc_data['avg_severity']}/3.0 — each 0.1 above 1.0 = +$15 |
+| **Month Risk Surcharge** | +${month_surcharge} | {client_month_name} — {'+' if month_modifier >= 0 else ''}{month_modifier} pt adjustment × $4/pt |
 | **Policy Type** | +${policy_adj} | {client_type} |
-| **Experience Discount** | -${min(years_driving*25,250):,} | {years_driving} years driving in Salem (max -$250) |
-| **Estimated Annual Premium** | **${est_premium:,}** | Minimum $800 |
+| **Experience Discount** | -${min(years_driving*25,250):,} | {years_driving} years driving in Salem — $25/yr (max -$250) |
+| **Estimated Annual Premium** | **${est_premium:,}** | Minimum floor: $800 |
 
 > *This is an ML-informed estimate based on Salem crash data patterns.
 > Actual premiums are set by licensed insurers and depend on additional factors
@@ -275,7 +281,7 @@ st.markdown(f"""
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ================================================================
-# RISK BY HOUR — for this location across all hours
+# RISK BY HOUR — for this location
 # ================================================================
 st.markdown("### 📊 Crash Severity Patterns for This Location")
 c1, c2 = st.columns(2)
@@ -386,8 +392,6 @@ styled_comp = comp_df[["Location","Zone","Risk Score","Risk Level",
     .map(style_selected, subset=["Selected"]) \
     .hide(axis="index")
 st.dataframe(styled_comp, use_container_width=True, height=380)
-
-
 
 st.markdown("""<div class="footer">
   🛡️ <strong>MataVision</strong> · Insurance Analytics · Salem, MA Capstone Project

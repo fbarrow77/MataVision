@@ -251,7 +251,7 @@ with c2:
 c3, c4 = st.columns(2)
 
 with c3:
-    st.markdown("**📊 Crash Severity Distribution — Salem 2020–Present**")
+    st.markdown("**📊 Crash Severity Distribution — Salem 2020–2025**")
     fig3 = go.Figure(go.Pie(
         labels=["Property Damage Only","Non-Fatal Injury","Fatal Injury"],
         values=[2343, 856, 8], hole=0.55,

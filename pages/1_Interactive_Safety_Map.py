@@ -257,10 +257,10 @@ def get_all_routes(origin_name, dest_name, api_key):
                         name_match = True
                 dists = [abs(lat - rlat) + abs(lon - rlon)
                          for rlat, rlon in zip(route_lats, route_lons)]
-                if name_match or min(dists) < 0.0004:
+                if name_match or min(dists) < 0.0008:
                     candidates.append((min(dists), loc_name))
             candidates.sort()
-            for _, loc_name in candidates[:3]:
+            for _, loc_name in candidates[:5]:
                 matched.append(loc_name)
             matched.append(dest_name)
             seen, unique = set(), []
@@ -637,8 +637,8 @@ Severity = 0.40 × Mean Stop Risk
 | December | +8 | Winter onset |
 
 **Severity Thresholds:**
-- 🟢 **Low Severity** — score below 35
-- 🟡 **Moderate Severity** — score 35–59
+- 🟢 **Low Severity** — score below 40
+- 🟡 **Moderate Severity** — score 40–59
 - 🔴 **High Severity** — score 60+
 
 > **Note:** Per-intersection **Risk Score (%)** and **Route Severity Score** are different.
@@ -706,7 +706,7 @@ for i, info in enumerate(safest_route["scored_stops"]):
 with st.expander("🤖 How does the ML model score these routes?"):
     st.markdown(f"""
 **Per-intersection risk scores reflect MataVision Random Forest feature importances**
-*(trained on Salem crash data — Capstone_3.ipynb)*
+
 
 | Feature | RF Importance | Effect on This Trip |
 |---|---|---|
@@ -716,7 +716,7 @@ with st.expander("🤖 How does the ML model score these routes?"):
 | **Is Rush Hour** | ~10% | {"Rush hour active ⚠️" if is_rush else "Not rush hour ✅"} |
 | **At Intersection** | ~8% (weakest) | Each scored stop is a known Salem intersection |
 
-**Key insight from your model:** Hour of Day is the strongest predictor (~40%).
+**Key insight :** Hour of Day is the strongest predictor (~40%).
 Month is second (~30%) — October scores highest in Salem due to the Halloween
 traffic surge, while July scores lowest with the calmest driving conditions.
 Weekend and Rush Hour have smaller but meaningful effects. At_Intersection
