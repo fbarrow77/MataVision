@@ -8,7 +8,7 @@ st.set_page_config(
     page_title="MataVision — City Planner Dashboard",
     page_icon="🏙️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 css_path = os.path.join(os.path.dirname(__file__), '..', 'styles.css')
@@ -58,7 +58,6 @@ MONTH_CONFIG = {
 }
 MONTH_NAMES = list(MONTH_CONFIG.keys())
 
-# Month → crash volume multiplier (relative to annual average)
 MONTH_VOLUME = {
     None: 1.00,
     1: 1.05, 2: 1.03, 3: 0.90, 4: 0.85,
@@ -70,8 +69,7 @@ MONTH_VOLUME = {
 # MASTER DATA
 # ================================================================
 ALL_HOUR_COUNTS = [12,8,6,5,4,10,22,55,78,60,55,62,70,65,68,95,110,108,80,55,38,28,22,15]
-
-ALL_DAY_COUNTS = {"Mon":420,"Tue":455,"Wed":470,"Thu":440,"Fri":520,"Sat":340,"Sun":290}
+ALL_DAY_COUNTS  = {"Mon":420,"Tue":455,"Wed":470,"Thu":440,"Fri":520,"Sat":340,"Sun":290}
 
 ALL_RISK = [
     {"Location":"Derby St / Washington Sq",   "Risk Score":89,"Risk Level":"High",  "Crash Count":142,"Peak Hour":"4-6 PM","Primary Factor":"High Volume + Wet Roads",  "Est. Budget":"$620K","Action":"Urgent Review",  "Road Type":"Highway"},
@@ -84,19 +82,25 @@ ALL_RISK = [
 ]
 
 # ================================================================
-# SIDEBAR FILTERS
+# FILTERS — on main page, no sidebar
 # ================================================================
-with st.sidebar:
-    st.markdown("### ⚙️ Dashboard Filters")
+st.markdown("### ⚙️ Dashboard Filters")
+f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
+with f1:
     month_filter = st.selectbox("📅 Month", MONTH_NAMES)
+with f2:
     road_filter  = st.selectbox("🛣️ Road Type", ["All Roads","Intersections","Highway","Residential"])
+with f3:
     risk_filter  = st.selectbox("⚠️ Risk Level", ["All Levels","High Only","Medium & High","Low Only"])
-    show_rush    = st.toggle("Highlight Rush Hours", value=True)
-    st.divider()
-    st.markdown("**Export Options**")
-    st.download_button("📥 Download Risk Report (CSV)",
-        data="Location,Risk Score,Risk Level,Crash Count\nDerby St / Washington Sq,89,High,142\nNorth St / Essex St,76,High,98",
-        file_name="salem_risk_report.csv", mime="text/csv", use_container_width=True)
+with f4:
+    show_rush    = st.toggle("Rush Hours", value=True)
+
+# Download button inline
+st.download_button("📥 Download Risk Report (CSV)",
+    data="Location,Risk Score,Risk Level,Crash Count\nDerby St / Washington Sq,89,High,142\nNorth St / Essex St,76,High,98",
+    file_name="salem_risk_report.csv", mime="text/csv")
+
+st.divider()
 
 # Unpack month config
 month_cfg      = MONTH_CONFIG[month_filter]
@@ -106,14 +110,14 @@ month_season   = month_cfg["season"]
 vol_mult       = MONTH_VOLUME.get(selected_month, 1.0)
 
 # Scale crash counts by month volume
-hour_counts = [int(round(c * vol_mult)) for c in ALL_HOUR_COUNTS]
-day_data    = {d: int(round(c * vol_mult)) for d, c in ALL_DAY_COUNTS.items()}
-days        = list(day_data.keys())
-day_counts  = list(day_data.values())
+hour_counts   = [int(round(c * vol_mult)) for c in ALL_HOUR_COUNTS]
+day_data      = {d: int(round(c * vol_mult)) for d, c in ALL_DAY_COUNTS.items()}
+days          = list(day_data.keys())
+day_counts    = list(day_data.values())
 total_crashes = int(round(3207 * vol_mult))
 total_label   = f"{month_filter} Crashes (est.)" if month_filter != "All Months" else "Total Crashes Analyzed"
 
-# Apply risk and road filters
+# Apply filters
 risk_df = pd.DataFrame(ALL_RISK)
 if road_filter != "All Roads":
     risk_df = risk_df[risk_df["Road Type"] == road_filter]
@@ -124,7 +128,6 @@ elif risk_filter == "Medium & High":
 elif risk_filter == "Low Only":
     risk_df = risk_df[risk_df["Risk Level"] == "Low"]
 
-# Adjust risk scores by month modifier
 risk_df = risk_df.copy()
 risk_df["Risk Score"] = risk_df["Risk Score"].apply(
     lambda s: max(0, min(100, s + month_modifier)))
@@ -190,7 +193,7 @@ k4.markdown(f"""<div class="planner-kpi">
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ================================================================
-# CRASH SEVERITY EXPLANATION — simplified for non-technical users
+# CRASH SEVERITY EXPLANATION
 # ================================================================
 with st.expander("📐 How is Crash Severity Measured?"):
     st.markdown("""
@@ -251,7 +254,7 @@ with c2:
 c3, c4 = st.columns(2)
 
 with c3:
-    st.markdown("**📊 Crash Severity Distribution — Salem 2020–2025**")
+    st.markdown("**📊 Crash Severity Distribution — Salem 2020–Present**")
     fig3 = go.Figure(go.Pie(
         labels=["Property Damage Only","Non-Fatal Injury","Fatal Injury"],
         values=[2343, 856, 8], hole=0.55,
@@ -269,8 +272,7 @@ with c4:
     st.markdown("**🗓️ Crash Volume by Month — Salem Crash Patterns**")
     months_list = ["Jan","Feb","Mar","Apr","May","Jun",
                    "Jul","Aug","Sep","Oct","Nov","Dec"]
-    month_vols  = [int(round(3207/12 * MONTH_VOLUME[m]))
-                   for m in range(1, 13)]
+    month_vols  = [int(round(3207/12 * MONTH_VOLUME[m])) for m in range(1, 13)]
     m_colors    = ["#7c3aed" if (selected_month == i+1) else
                    "#dc2626" if MONTH_VOLUME[i+1] >= 1.10 else
                    "#22c55e" if MONTH_VOLUME[i+1] <= 0.85 else "#2563eb"
@@ -296,7 +298,7 @@ st.markdown(f"**🌡️ Crash Density Heatmap — Hour vs Day of Week ({month_fi
 st.markdown('<div style="font-size:.78rem;color:#6b7280;margin-bottom:8px">PM rush hours (3–6 PM) show highest crash density — Salem data 2020 to present</div>',
             unsafe_allow_html=True)
 
-day_names  = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+day_names   = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
 hour_labels = ["12AM–2AM","2AM–4AM","4AM–6AM","6AM–8AM","8AM–10AM","10AM–12PM",
                "12PM–2PM","2PM–4PM","4PM–6PM","6PM–8PM","8PM–10PM","10PM–12AM"]
 
@@ -357,7 +359,7 @@ else:
     st.dataframe(styled, use_container_width=True, height=min(320, 60+len(risk_df)*45))
 
 # ================================================================
-# WHAT DRIVES RISK — simplified for non-technical users
+# WHAT DRIVES RISK
 # ================================================================
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("### 📊 What Drives Crash Risk in Salem?")
