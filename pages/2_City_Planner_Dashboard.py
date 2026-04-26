@@ -84,7 +84,7 @@ ALL_RISK = [
 # ================================================================
 # FILTERS — on main page, no sidebar
 # ================================================================
-st.markdown("### ⚙️ Dashboard Filters")
+st.markdown("### 📍 Filter by Location & Time")
 f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
 with f1:
     month_filter = st.selectbox("📅 Month", MONTH_NAMES)
